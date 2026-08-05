@@ -146,13 +146,16 @@ void AfterimageAudioProcessor::prepareToPlay (double sampleRate, int samplesPerB
 
     engine.prepare (sampleRate, samplesPerBlock, numChannels);
     smoothers.prepare (sampleRate);
-    dryWetMixer.prepare (sampleRate);
 
-    dryBuffer.setSize (numChannels, samplesPerBlock, false, true, true);
+    const int latency = engine.getLatencySamples();
+    dryWetMixer.prepare (numChannels, samplesPerBlock, latency);
+    setLatencySamples (latency);
 
-    // Phase 1 reports zero latency (pass-through). Phase 2 will call
-    // setLatencySamples (engine.getLatencySamples()).
-    setLatencySamples (0);
+    // Allocate with headroom so hosts that exceed the reported block size
+    // still have scratch space without audio-thread realloc (capped).
+    const int scratchSamples = juce::jmax (samplesPerBlock, latency);
+    inputScratch.setSize (numChannels, scratchSamples, false, true, true);
+    delayedDry.setSize (numChannels, scratchSamples, false, true, true);
 
     updateSmoothedTargets();
     smoothers.influence.setCurrentAndTargetValue (smoothers.influence.getTargetValue());
@@ -166,6 +169,7 @@ void AfterimageAudioProcessor::prepareToPlay (double sampleRate, int samplesPerB
     smoothers.bypassAmount.setCurrentAndTargetValue (smoothers.bypassAmount.getTargetValue());
 
     engine.clearHistory();
+    dryWetMixer.reset();
     inputLevel.store (0.0f, std::memory_order_relaxed);
     outputLevel.store (0.0f, std::memory_order_relaxed);
 }
@@ -173,6 +177,7 @@ void AfterimageAudioProcessor::prepareToPlay (double sampleRate, int samplesPerB
 void AfterimageAudioProcessor::releaseResources()
 {
     engine.releaseResources();
+    dryWetMixer.releaseResources();
 }
 
 bool AfterimageAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -216,32 +221,54 @@ void AfterimageAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
 
     updateSmoothedTargets();
 
-    // dryBuffer is allocated in prepareToPlay for the host's reported block size.
-    // Never resize on the audio thread.
-    const int copyChannels = juce::jmin (numChannels, dryBuffer.getNumChannels());
-    const int copySamples  = juce::jmin (numSamples, dryBuffer.getNumSamples());
+    const int copyChannels = juce::jmin (numChannels, inputScratch.getNumChannels());
+    const int copySamples  = juce::jmin (numSamples, inputScratch.getNumSamples());
 
+    // Snapshot undelayed input for metering + dry delay.
     for (int ch = 0; ch < copyChannels; ++ch)
-        dryBuffer.copyFrom (ch, 0, buffer, ch, 0, copySamples);
+        inputScratch.copyFrom (ch, 0, buffer, ch, 0, copySamples);
 
     const float inPeakSnapshot = [&]
     {
         float peak = 0.0f;
-        for (int ch = 0; ch < numChannels; ++ch)
-            peak = juce::jmax (peak, dryBuffer.getMagnitude (ch, 0, numSamples));
+        for (int ch = 0; ch < copyChannels; ++ch)
+            peak = juce::jmax (peak, inputScratch.getMagnitude (ch, 0, copySamples));
         return peak;
     }();
 
-    // Phase 1: wet path is still a transparent copy of the input.
-    // Phase 2+ will call engine.process (buffer, modeParams, mode) here.
+    // Wet path: transparent STFT (Phase 2 — identity spectrum).
+    afterimage::ModeParams modeParams;
+    modeParams.influence         = smoothers.influence.getCurrentValue();
+    modeParams.recallPosition    = smoothers.recallPosition.getCurrentValue();
+    modeParams.forget            = smoothers.forget.getCurrentValue();
+    modeParams.blur              = smoothers.blur.getCurrentValue();
+    modeParams.transientPreserve = smoothers.transientPreserve.getCurrentValue();
+    modeParams.randomRecall      = smoothers.randomRecall.getCurrentValue();
+    modeParams.freeze            = pFreeze->load() > 0.5f;
 
-    for (int i = 0; i < numSamples; ++i)
+    engine.process (buffer, modeParams, getCurrentMode());
+
+    // Latency-aligned dry for mix / bypass.
+    if (delayedDry.getNumChannels() >= copyChannels
+        && delayedDry.getNumSamples() >= copySamples
+        && inputScratch.getNumSamples() >= copySamples)
+    {
+        // Ensure delayedDry block matches this callback size for the delay read.
+        juce::AudioBuffer<float> dryIn (inputScratch.getArrayOfWritePointers(),
+                                        copyChannels,
+                                        copySamples);
+        juce::AudioBuffer<float> dryOut (delayedDry.getArrayOfWritePointers(),
+                                         copyChannels,
+                                         copySamples);
+        dryWetMixer.processDryDelay (dryIn, dryOut);
+    }
+
+    for (int i = 0; i < copySamples; ++i)
     {
         const float mix = smoothers.mix.getNextValue();
         const float gain = smoothers.outputGain.getNextValue();
         const float bypass = smoothers.bypassAmount.getNextValue();
 
-        // Advance unused smoothers so they stay in sync for later phases.
         smoothers.influence.getNextValue();
         smoothers.recallPosition.getNextValue();
         smoothers.forget.getNextValue();
@@ -252,14 +279,28 @@ void AfterimageAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
         const float dryGain = std::cos (mix * juce::MathConstants<float>::halfPi);
         const float wetGain = std::sin (mix * juce::MathConstants<float>::halfPi);
 
-        for (int ch = 0; ch < numChannels; ++ch)
+        for (int ch = 0; ch < copyChannels; ++ch)
         {
-            const float dry = dryBuffer.getSample (ch, i);
+            const float dry = delayedDry.getSample (ch, i);
             float wet = buffer.getSample (ch, i) * gain;
             float mixed = dry * dryGain + wet * wetGain;
             mixed = mixed * (1.0f - bypass) + dry * bypass;
             buffer.setSample (ch, i, mixed);
         }
+    }
+
+    // If the host block exceeded our scratch, leave remaining samples as STFT wet only.
+    for (int i = copySamples; i < numSamples; ++i)
+    {
+        smoothers.mix.skip (1);
+        smoothers.outputGain.skip (1);
+        smoothers.bypassAmount.skip (1);
+        smoothers.influence.skip (1);
+        smoothers.recallPosition.skip (1);
+        smoothers.forget.skip (1);
+        smoothers.blur.skip (1);
+        smoothers.transientPreserve.skip (1);
+        smoothers.randomRecall.skip (1);
     }
 
     {

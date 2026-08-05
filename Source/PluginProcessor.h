@@ -5,15 +5,16 @@
 #include "DSP/ParameterSmoother.h"
 #include "DSP/SpectralEngine.h"
 #include "DSP/SpectralModes.h"
+#include "DSP/DryWetMixer.h"
 #include "Utilities/Constants.h"
 
 #include <atomic>
 
 /**
-    AFTERIMAGE — Phase 1 foundation.
+    AFTERIMAGE — Phase 2 STFT engine.
 
-    Pass-through audio with APVTS, smoothed output gain / mix / bypass,
-    and a prepared (but inactive) SpectralEngine for later phases.
+    Transparent overlap-add STFT with host latency reporting and
+    latency-compensated equal-power dry/wet mixing.
 */
 class AfterimageAudioProcessor : public juce::AudioProcessor
 {
@@ -65,12 +66,12 @@ private:
     afterimage::ParameterSmoother smoothers;
     afterimage::DryWetMixer dryWetMixer;
 
-    juce::AudioBuffer<float> dryBuffer;
+    juce::AudioBuffer<float> inputScratch;   // undelayed input copy
+    juce::AudioBuffer<float> delayedDry;     // latency-aligned dry
 
     std::atomic<float> inputLevel  { 0.0f };
     std::atomic<float> outputLevel { 0.0f };
 
-    // Cached raw parameter pointers (audio-thread safe reads).
     std::atomic<float>* pMode = nullptr;
     std::atomic<float>* pMemoryLength = nullptr;
     std::atomic<float>* pRecallPosition = nullptr;

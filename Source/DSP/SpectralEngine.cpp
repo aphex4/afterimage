@@ -10,7 +10,10 @@ void SpectralEngine::prepare (double sampleRate, int maxBlockSize, int numChanne
     stft_.prepare (sampleRate, maxBlockSize, numChannels);
     history_.prepare (sampleRate, stft_.getHopSize(), constants::memoryLengthMaxSec);
     modes_.prepare (constants::numBins);
-    dryWet_.prepare (sampleRate);
+
+    // Phase 2: identity spectrum (no callback). Phase 3+ installs a handler
+    // that pushes history and runs Shadow / Erase / Merge.
+    stft_.setSpectrumCallback (nullptr, nullptr);
 
     prepared_ = true;
     reset();
@@ -21,7 +24,6 @@ void SpectralEngine::reset()
     stft_.reset();
     history_.reset();
     modes_.reset();
-    dryWet_.reset();
 }
 
 void SpectralEngine::releaseResources()
@@ -34,11 +36,17 @@ void SpectralEngine::process (juce::AudioBuffer<float>& buffer,
                               const ModeParams& params,
                               SpectralMode mode)
 {
-    // Phase 1: engine is prepared but not yet inserted into the audio path.
-    juce::ignoreUnused (buffer, params, mode, prepared_);
+    if (! prepared_)
+        return;
 
-    // TODO(Phase 2): stft_.process(...) extracting frames, pushing history,
-    // running modes_, reconstructing via OLA.
+    // Stash for future spectrum callback use (Phase 3+).
+    pendingParams_ = params;
+    pendingMode_ = mode;
+
+    // Phase 2: transparent STFT — spectrum untouched, WOLA reconstruction only.
+    stft_.process (buffer);
+
+    juce::ignoreUnused (pendingParams_, pendingMode_);
 }
 
 } // namespace afterimage

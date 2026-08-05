@@ -9,7 +9,7 @@ namespace afterimage
 namespace constants
 {
     // -------------------------------------------------------------------------
-    // STFT defaults (Phase 2+) — not yet active in Phase 1 pass-through.
+    // STFT configuration (Phase 2+)
     // -------------------------------------------------------------------------
     constexpr int    fftOrder           = 11;          // 2^11 = 2048
     constexpr int    fftSize            = 1 << fftOrder;

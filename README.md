@@ -4,21 +4,23 @@
 
 AFTERIMAGE is a real-time spectral memory processor. It continuously analyzes and stores a short history of the signal’s spectral content so the present can interact with its own recent past — producing evolving spectral echoes, ghost harmonics, frequency suppression, and morphing textures.
 
-> **Current milestone: Phase 1 — Project foundation**  
-> Pass-through audio with full parameter surface, dark UI, and DSP scaffolding. No STFT processing yet.
+> **Current milestone: Phase 2 — STFT engine**  
+> Transparent overlap-add STFT with host latency reporting and latency-compensated dry/wet. Spectral modes (Shadow / Erase / Merge) are not audible yet.
 
 ---
 
-## Current features (Phase 1)
+## Current features (Phase 2)
 
 - JUCE CMake project targeting **VST3** and **Standalone**
 - Full APVTS parameter layout (mode, memory, recall, influence, forget, blur, transients, freeze, random, mix, output, bypass)
 - State save / restore (parameters only — spectral history is never serialized)
-- Pass-through audio with smoothed output gain, equal-power mix, and click-free bypass
+- **Overlap-add STFT** (FFT 2048 / hop 512 / Hann / WOLA) — transparent unity reconstruction
+- Host latency reporting (`fftSize` = 2048 samples)
+- Latency-compensated equal-power dry/wet mix
+- Smoothed output gain and bypass
 - Dark minimal editor (900×600 default, resizable)
-- Mode selector (Shadow / Erase / Merge)
-- Placeholder Memory Pool visualization
-- DSP architecture stubs for STFT, history buffer, and spectral modes
+- Mode selector + placeholder Memory Pool visualization
+- DSP scaffolding for spectral history and modes (inactive until Phase 3–5)
 
 ---
 
@@ -121,11 +123,11 @@ build/AFTERIMAGE_artefacts/Release/VST3/AFTERIMAGE.vst3
 
 ---
 
-## Known limitations (Phase 1)
+## Known limitations (Phase 2)
 
-- No FFT / spectral processing yet — audio is a gain/mix/bypass pass-through
-- Dry path is not latency-compensated (latency is 0 until Phase 2)
-- Memory Pool is a decorative placeholder
+- Spectral modes do not yet modify the spectrum — wet path is transparent STFT only
+- Spectral history is allocated but not written/read in the audio path
+- Memory Pool is still a decorative placeholder
 - Factory presets not yet included
 - Unit tests are stubs and are not wired into CMake yet
 
@@ -133,8 +135,8 @@ build/AFTERIMAGE_artefacts/Release/VST3/AFTERIMAGE.vst3
 
 ## Development roadmap
 
-1. **Phase 1** — Project foundation ← *current*
-2. **Phase 2** — STFT engine (transparent unity processing + latency)
+1. **Phase 1** — Project foundation ✅
+2. **Phase 2** — STFT engine (transparent unity processing + latency) ← *current*
 3. **Phase 3** — Spectral history buffer integration
 4. **Phase 4** — Shadow mode
 5. **Phase 5** — Erase + Merge + mode crossfade
