@@ -18,6 +18,7 @@ void MemoryPoolComponent::setRecallPosition (float age01) { recallPosition_ = ju
 void MemoryPoolComponent::setInfluence (float influence01) { influence_ = juce::jlimit (0.0f, 1.0f, influence01); }
 void MemoryPoolComponent::setInputLevel (float level01) { inputLevel_ = juce::jlimit (0.0f, 1.0f, level01); }
 void MemoryPoolComponent::setOutputLevel (float level01) { outputLevel_ = juce::jlimit (0.0f, 1.0f, level01); }
+void MemoryPoolComponent::setHistoryFill (float fill01) { historyFill_ = juce::jlimit (0.0f, 1.0f, fill01); }
 
 void MemoryPoolComponent::timerCallback()
 {
@@ -86,6 +87,15 @@ void MemoryPoolComponent::paint (juce::Graphics& g)
     g.drawText ("MEMORY POOL", bounds.reduced (16.0f).removeFromTop (18.0f),
                 juce::Justification::topLeft, false);
 
+    {
+        auto fillBar = bounds.reduced (16.0f).removeFromBottom (6.0f);
+        g.setColour (AfterimageLookAndFeel::meterTrack());
+        g.fillRoundedRectangle (fillBar, 2.0f);
+        g.setColour ((frozen_ ? AfterimageLookAndFeel::accentWarm()
+                              : AfterimageLookAndFeel::accentCyan()).withAlpha (0.7f));
+        g.fillRoundedRectangle (fillBar.withWidth (fillBar.getWidth() * historyFill_), 2.0f);
+    }
+
     if (frozen_)
     {
         g.setColour (AfterimageLookAndFeel::accentWarm().withAlpha (0.85f));
@@ -96,7 +106,7 @@ void MemoryPoolComponent::paint (juce::Graphics& g)
 
     g.setColour (AfterimageLookAndFeel::textMuted().withAlpha (0.45f));
     g.setFont (juce::FontOptions (10.0f));
-    g.drawFittedText ("Phase 1 placeholder — spectral trails arrive in Phase 7",
-                      bounds.reduced (16.0f).removeFromBottom (24).toNearestInt(),
+    g.drawFittedText ("Spectral history active — modes arrive in Phase 4",
+                      bounds.reduced (16.0f).removeFromBottom (28).toNearestInt(),
                       juce::Justification::centred, 1);
 }

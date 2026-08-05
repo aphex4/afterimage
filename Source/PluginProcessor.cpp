@@ -204,7 +204,7 @@ void AfterimageAudioProcessor::updateSmoothedTargets()
     smoothers.outputGain.setTargetValue (dbToGain (pOutputGain->load()));
     smoothers.bypassAmount.setTargetValue (pBypass->load() > 0.5f ? 1.0f : 0.0f);
 
-    engine.getHistory().setActiveMemoryLengthSeconds (pMemoryLength->load());
+    engine.setActiveMemoryLengthSeconds (pMemoryLength->load());
     engine.setFrozen (pFreeze->load() > 0.5f);
 }
 
@@ -236,7 +236,7 @@ void AfterimageAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
         return peak;
     }();
 
-    // Wet path: transparent STFT (Phase 2 — identity spectrum).
+    // Wet path: STFT + spectral history capture (Phase 3 — spectrum still identity).
     afterimage::ModeParams modeParams;
     modeParams.influence         = smoothers.influence.getCurrentValue();
     modeParams.recallPosition    = smoothers.recallPosition.getCurrentValue();

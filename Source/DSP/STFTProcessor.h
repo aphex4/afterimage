@@ -31,8 +31,12 @@ class STFTProcessor
 public:
     /** Called after the forward FFT, before the inverse. data is the
         juce real-only interleaved buffer (length >= 2 * fftSize).
-        Must be real-time safe (no alloc / lock). nullptr = identity. */
-    using SpectrumCallback = void (*) (void* userData, float* interleavedFftData, int fftSize) noexcept;
+        channelIndex is the STFT channel. Must be real-time safe.
+        nullptr = identity (no spectral modification / no side effects). */
+    using SpectrumCallback = void (*) (void* userData,
+                                       float* interleavedFftData,
+                                       int fftSize,
+                                       int channelIndex) noexcept;
 
     void prepare (double sampleRate, int maxBlockSize, int numChannels);
     void reset();
@@ -74,7 +78,7 @@ private:
         }
     };
 
-    void processFrame (Channel& ch) noexcept;
+    void processFrame (Channel& ch, int channelIndex) noexcept;
 
     std::vector<std::unique_ptr<Channel>> channels_;
     std::array<float, fftSize> window_ {};

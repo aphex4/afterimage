@@ -64,7 +64,7 @@ void STFTProcessor::setSpectrumCallback (SpectrumCallback callback, void* userDa
     spectrumUserData_ = userData;
 }
 
-void STFTProcessor::processFrame (Channel& ch) noexcept
+void STFTProcessor::processFrame (Channel& ch, int channelIndex) noexcept
 {
     // Oldest → newest fftSize samples from the input ring, analysis-windowed.
     for (int i = 0; i < fftSize; ++i)
@@ -80,7 +80,7 @@ void STFTProcessor::processFrame (Channel& ch) noexcept
     ch.fft.performRealOnlyForwardTransform (ch.fftBuf.data(), false);
 
     if (spectrumCallback_ != nullptr)
-        spectrumCallback_ (spectrumUserData_, ch.fftBuf.data(), fftSize);
+        spectrumCallback_ (spectrumUserData_, ch.fftBuf.data(), fftSize, channelIndex);
 
     ch.fft.performRealOnlyInverseTransform (ch.fftBuf.data()); // includes 1/N
 
@@ -119,7 +119,7 @@ void STFTProcessor::process (juce::AudioBuffer<float>& buffer) noexcept
             {
                 ch.count = 0;
                 ch.primed = true;
-                processFrame (ch);
+                processFrame (ch, c);
             }
         }
     }

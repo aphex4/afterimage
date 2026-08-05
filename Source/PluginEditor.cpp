@@ -184,6 +184,7 @@ void AfterimageAudioProcessorEditor::timerCallback()
     memoryPool.setInputLevel (inLvl);
     memoryPool.setOutputLevel (outLvl);
     memoryPool.setFrozen (freezeButton.getToggleState());
+    memoryPool.setHistoryFill (audioProcessor.getEngine().getHistoryFillAmount (0));
 
     if (auto* recall = audioProcessor.getAPVTS().getRawParameterValue (afterimage::constants::idRecallPosition))
         memoryPool.setRecallPosition (recall->load());

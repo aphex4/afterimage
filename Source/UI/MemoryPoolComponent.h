@@ -25,6 +25,7 @@ public:
     void setInfluence (float influence01);
     void setInputLevel (float level01);
     void setOutputLevel (float level01);
+    void setHistoryFill (float fill01);
 
 private:
     void timerCallback() override;
@@ -35,6 +36,7 @@ private:
     float influence_ = 0.5f;
     float inputLevel_ = 0.0f;
     float outputLevel_ = 0.0f;
+    float historyFill_ = 0.0f;
     float phase_ = 0.0f;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MemoryPoolComponent)

@@ -14,8 +14,6 @@ namespace afterimage
     Allocates storage for the maximum memory length (10 s) during prepare().
     Changing Memory Length only changes the searchable window — never reallocates
     on the audio thread.
-
-    Phase 1: API + storage only. Phase 3 wires it into the STFT path.
 */
 class SpectralHistoryBuffer
 {
@@ -30,10 +28,22 @@ public:
     void setFrozen (bool shouldFreeze) noexcept { frozen_ = shouldFreeze; }
     [[nodiscard]] bool isFrozen() const noexcept { return frozen_; }
 
-    void pushFrame (const SpectralFrame& frame);
+    /** Copy a prepared frame into the ring (no-op when frozen). */
+    void pushFrame (const SpectralFrame& frame) noexcept;
 
-    [[nodiscard]] const SpectralFrame& getFrameByAgeFrames (int age) const;
-    [[nodiscard]] const SpectralFrame& getFrameByNormalizedAge (float age01) const;
+    /**
+        Direct write API — avoids an intermediate frame copy.
+        Returns nullptr when frozen or unprepared. Caller fills the frame,
+        then calls commitWriteFrame().
+    */
+    [[nodiscard]] SpectralFrame* beginWriteFrame() noexcept;
+    void commitWriteFrame() noexcept;
+
+    [[nodiscard]] const SpectralFrame& getFrameByAgeFrames (int age) const noexcept;
+    [[nodiscard]] const SpectralFrame& getFrameByNormalizedAge (float age01) const noexcept;
+
+    /** Interpolate between the two frames nearest to age01 (0 = newest). */
+    void getInterpolatedMagnitudes (float age01, float* destMagnitudes, int numBins) const noexcept;
 
     [[nodiscard]] int getAvailableFrameCount() const noexcept { return availableFrames_; }
     [[nodiscard]] int getActiveFrameCount() const noexcept;
