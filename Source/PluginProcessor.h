@@ -6,15 +6,23 @@
 #include "DSP/SpectralEngine.h"
 #include "DSP/SpectralModes.h"
 #include "DSP/DryWetMixer.h"
+#include "DSP/VisualizationAtomics.h"
 #include "Utilities/Constants.h"
 
 #include <atomic>
+#include <vector>
 
 /**
-    AFTERIMAGE — Phase 2 STFT engine.
+    AFTERIMAGE — Phase 2–3 validated processor.
 
-    Transparent overlap-add STFT with host latency reporting and
-    latency-compensated equal-power dry/wet mixing.
+    Routing (documented):
+      1) latency-aligned dry + wet (identity STFT)
+      2) equal-power dry/wet mix
+      3) bypass crossfade (toward latency-aligned dry)
+      4) final output gain  ← applied AFTER bypass so it always trims the audible output
+
+    Host callbacks larger than maxInternalBlockSize are processed in fixed chunks
+    using preallocated scratch (no audio-thread allocation).
 */
 class AfterimageAudioProcessor : public juce::AudioProcessor
 {
@@ -22,13 +30,11 @@ public:
     AfterimageAudioProcessor();
     ~AfterimageAudioProcessor() override = default;
 
-    //==============================================================================
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
     void releaseResources() override;
     bool isBusesLayoutSupported (const BusesLayout& layouts) const override;
     void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
 
-    //==============================================================================
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
 
@@ -47,30 +53,40 @@ public:
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
 
-    //==============================================================================
     juce::AudioProcessorValueTreeState& getAPVTS() noexcept { return apvts; }
     afterimage::SpectralEngine& getEngine() noexcept { return engine; }
 
     afterimage::SpectralMode getCurrentMode() const noexcept;
 
-    float getInputLevel() const noexcept { return inputLevel.load (std::memory_order_relaxed); }
-    float getOutputLevel() const noexcept { return outputLevel.load (std::memory_order_relaxed); }
+    /** UI-safe visualization reads (atomics / snapshot publisher only). */
+    const afterimage::VisualizationAtomics& getVisualization() const noexcept { return engine.getVisualization(); }
+    afterimage::SnapshotPublisher& getSnapshotPublisher() noexcept { return engine.getSnapshotPublisher(); }
+
+    float getInputLevel() const noexcept  { return engine.getVisualization().loadInputPeak(); }
+    float getOutputLevel() const noexcept { return engine.getVisualization().loadOutputPeak(); }
+    float getHistoryFill() const noexcept { return engine.getVisualization().loadHistoryFill(); }
 
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
 private:
-    void updateSmoothedTargets();
+    void updateParameterTargets();
+    void processChunk (juce::AudioBuffer<float>& wetChunk,
+                       juce::AudioBuffer<float>& dryInChunk,
+                       juce::AudioBuffer<float>& delayedDryChunk) noexcept;
 
     juce::AudioProcessorValueTreeState apvts;
     afterimage::SpectralEngine engine;
     afterimage::ParameterSmoother smoothers;
     afterimage::DryWetMixer dryWetMixer;
 
-    juce::AudioBuffer<float> inputScratch;   // undelayed input copy
-    juce::AudioBuffer<float> delayedDry;     // latency-aligned dry
+    juce::AudioBuffer<float> inputScratch;
+    juce::AudioBuffer<float> delayedDry;
+    std::vector<float*> wetPtrs_;
+    std::vector<float*> dryInPtrs_;
+    std::vector<float*> delayedPtrs_;
 
-    std::atomic<float> inputLevel  { 0.0f };
-    std::atomic<float> outputLevel { 0.0f };
+    int maxChannels_ = 2;
+    int maxChunk_ = afterimage::constants::maxInternalBlockSize;
 
     std::atomic<float>* pMode = nullptr;
     std::atomic<float>* pMemoryLength = nullptr;

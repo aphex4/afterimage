@@ -5,17 +5,12 @@ project(AFTERIMAGE VERSION 0.1.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+enable_testing()
 
-# Universal binary on macOS when architectures are not otherwise specified.
 if(APPLE AND NOT CMAKE_OSX_ARCHITECTURES)
     set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "macOS architectures" FORCE)
 endif()
 
-# ---------------------------------------------------------------------------
-# JUCE
-#   1) -DJUCE_PATH=/path/to/JUCE   (preferred when a local checkout exists)
-#   2) Otherwise FetchContent pulls JUCE 8.0.6
-# ---------------------------------------------------------------------------
 set(JUCE_PATH "" CACHE PATH "Path to a local JUCE checkout (optional)")
 
 if(JUCE_PATH STREQUAL "" AND EXISTS "$ENV{HOME}/dev/Spawnclone/JUCE/CMakeLists.txt")
@@ -35,6 +30,15 @@ else()
         GIT_SHALLOW    TRUE)
     FetchContent_MakeAvailable(JUCE)
 endif()
+
+# ---------------------------------------------------------------------------
+# Shared DSP sources (plugin + tests)
+# ---------------------------------------------------------------------------
+set(AFTERIMAGE_DSP_SOURCES
+    Source/DSP/SpectralEngine.cpp
+    Source/DSP/STFTProcessor.cpp
+    Source/DSP/SpectralHistoryBuffer.cpp
+    Source/DSP/SpectralModes.cpp)
 
 # ---------------------------------------------------------------------------
 # Plugin
@@ -60,14 +64,10 @@ juce_generate_juce_header(AFTERIMAGE)
 target_sources(AFTERIMAGE PRIVATE
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp
-
-    Source/DSP/SpectralEngine.cpp
-    Source/DSP/STFTProcessor.cpp
-    Source/DSP/SpectralHistoryBuffer.cpp
-    Source/DSP/SpectralModes.cpp
-
+    ${AFTERIMAGE_DSP_SOURCES}
     Source/UI/AfterimageLookAndFeel.cpp
-    Source/UI/MemoryPoolComponent.cpp
+    Source/UI/AfterimageKnob.cpp
+    Source/UI/MemoryWellComponent.cpp
     Source/UI/SpectrumDisplay.cpp
     Source/UI/ModeSelector.cpp)
 
@@ -96,3 +96,29 @@ target_link_libraries(AFTERIMAGE
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags)
+
+# ---------------------------------------------------------------------------
+# Validation tests (no plugin client)
+# ---------------------------------------------------------------------------
+add_executable(AFTERIMAGE_Tests
+    Tests/ValidationTests.cpp
+    ${AFTERIMAGE_DSP_SOURCES})
+
+target_include_directories(AFTERIMAGE_Tests PRIVATE Source)
+
+target_compile_definitions(AFTERIMAGE_Tests
+    PRIVATE
+        JUCE_GLOBAL_MODULE_SETTINGS_INCLUDED=1
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_STANDALONE_APPLICATION=1)
+
+target_link_libraries(AFTERIMAGE_Tests
+    PRIVATE
+        juce::juce_dsp
+        juce::juce_audio_basics
+        juce::juce_core
+        juce::juce_data_structures
+        juce::juce_events)
+
+add_test(NAME AFTERIMAGE_Validation COMMAND AFTERIMAGE_Tests)

@@ -13,26 +13,14 @@ namespace afterimage
 {
 
 /**
-    Overlap-add STFT processor (Phase 2).
+    Overlap-add STFT with per-hop-phase WOLA normalization.
 
-    Per channel:
-      input ring → Hann window → real FFT → optional spectrum callback
-      → IFFT → Hann → WOLA output ring
-
-    With Hann on analysis and synthesis and hop = N/4, the overlapped
-    sum of window² is constant; we divide by that measured COLA scale for
-    transparent unity-gain reconstruction when the spectrum is untouched.
-
-    Latency is fftSize samples (one full ring revolution before a written
-    sample is read back from the OLA buffer).
+    Latency = fftSize samples.
+    Spectrum callback must leave the FFT buffer untouched for identity reconstruction.
 */
 class STFTProcessor
 {
 public:
-    /** Called after the forward FFT, before the inverse. data is the
-        juce real-only interleaved buffer (length >= 2 * fftSize).
-        channelIndex is the STFT channel. Must be real-time safe.
-        nullptr = identity (no spectral modification / no side effects). */
     using SpectrumCallback = void (*) (void* userData,
                                        float* interleavedFftData,
                                        int fftSize,
@@ -44,13 +32,21 @@ public:
 
     void setSpectrumCallback (SpectrumCallback callback, void* userData) noexcept;
 
-    /** In-place STFT. Handles arbitrary host block sizes. */
     void process (juce::AudioBuffer<float>& buffer) noexcept;
 
     [[nodiscard]] int getLatencySamples() const noexcept { return latencySamples_; }
     [[nodiscard]] int getFftSize() const noexcept { return constants::fftSize; }
     [[nodiscard]] int getHopSize() const noexcept { return constants::hopSize; }
     [[nodiscard]] bool isPrepared() const noexcept { return prepared_; }
+
+    /** Exposed for tests: WOLA scale for hop phase [0, hopSize). */
+    [[nodiscard]] float getWolaScaleForPhase (int phase) const noexcept
+    {
+        jassert (phase >= 0 && phase < hopSize);
+        return wolaScaleTable_[static_cast<size_t> (phase)];
+    }
+
+    [[nodiscard]] float getMaxWolaScaleDeviation() const noexcept { return wolaMaxDeviation_; }
 
 private:
     static constexpr int fftOrder = constants::fftOrder;
@@ -79,9 +75,12 @@ private:
     };
 
     void processFrame (Channel& ch, int channelIndex) noexcept;
+    void buildWolaTable() noexcept;
 
     std::vector<std::unique_ptr<Channel>> channels_;
     std::array<float, fftSize> window_ {};
+    std::array<float, hopSize> wolaScaleTable_ {};
+    float wolaMaxDeviation_ = 0.0f;
 
     SpectrumCallback spectrumCallback_ = nullptr;
     void*            spectrumUserData_  = nullptr;
@@ -89,7 +88,6 @@ private:
     double sampleRate_     = 44100.0;
     int    numChannels_    = 2;
     int    latencySamples_ = 0;
-    float  wolaScale_      = 1.0f;
     bool   prepared_       = false;
 };
 

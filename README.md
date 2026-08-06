@@ -4,24 +4,21 @@
 
 AFTERIMAGE is a real-time spectral memory processor. It continuously analyzes and stores a short history of the signal’s spectral content so the present can interact with its own recent past — producing evolving spectral echoes, ghost harmonics, frequency suppression, and morphing textures.
 
-> **Current milestone: Phase 3 — Spectral history**  
-> Per-channel spectral frames are captured into a circular history each STFT hop. Freeze stops writing. Spectrum reconstruction is still transparent — audible modes begin in Phase 4.
+> **Current milestone: Phase 5 — Erase + Merge**  
+> Shadow, Erase, and Merge are audible. Memory Well UI drives recall. STFT identity and mode tests covered.
 
 ---
 
-## Current features (Phase 3)
+## Current features (Phase 5)
 
-- JUCE CMake project targeting **VST3** and **Standalone**
-- Full APVTS parameter layout
-- State save / restore (parameters only — spectral history is never serialized)
-- Overlap-add STFT (FFT 2048 / hop 512 / Hann / WOLA) with host latency reporting
-- Latency-compensated equal-power dry/wet mix
-- **Per-channel spectral history** (magnitude, phase, RMS, centroid, transient flux)
-- **Freeze** stops history writes without freezing the dry/wet audio path
-- **Memory Length** controls the searchable age window (no audio-thread allocation)
-- Memory Pool fill indicator reflects history occupancy
-- Mode algorithms not yet applied to the spectrum (Phase 4+)
-
+- Overlap-add STFT with host latency + latency-compensated dry/wet
+- Per-channel spectral history with Freeze and Memory Length
+- **Shadow** — additive spectral ghost of recalled memory
+- **Erase** — carve holes where memory overlaps the present
+- **Merge** — morph the present toward recalled memory
+- Shared controls: Recall (ring), Forget, Blur (history only), Transient Preserve, Influence, Mix, Output
+- ~80 ms click-free crossfade when switching modes
+- Memory Well particle visualization (DSP-seeded)
 ---
 
 ## DSP overview (planned)
@@ -108,14 +105,14 @@ build/AFTERIMAGE_artefacts/Release/VST3/AFTERIMAGE.vst3
 
 | Control | Range | Notes |
 |---------|-------|-------|
-| Mode | Shadow / Erase / Merge | Algorithms arrive in Phases 4–5 |
+| Mode | Shadow / Erase / Merge | All three transform magnitudes |
 | Memory | 0.1–10 s | Searchable history window |
-| Recall | 0–100% | Position in history (0 = newest) |
+| Recall | 0–100% | Position in history (0 = newest); scrub via Memory Well ring |
 | Influence | 0–100% | Strength of spectral interaction |
 | Forget | 0–100% | How quickly older frames lose weight |
-| Blur | 0–100% | Inter-bin magnitude smoothing |
+| Blur | 0–100% | Inter-bin smoothing of **history** magnitudes |
 | Transients | 0–100% | Attack preservation |
-| Random | 0–100% | Controlled recall wander |
+| Random | 0–100% | Controlled recall wander (not wired yet) |
 | Freeze | on/off | Stop writing new history frames |
 | Mix | 0–100% | Equal-power dry/wet |
 | Output | −24…+12 dB | Output gain |
@@ -123,25 +120,23 @@ build/AFTERIMAGE_artefacts/Release/VST3/AFTERIMAGE.vst3
 
 ---
 
-## Known limitations (Phase 3)
+## Known limitations (Phase 5)
 
-- Spectral modes do not yet modify the spectrum — wet path is still transparent STFT
-- History is captured but not yet read by Shadow / Erase / Merge
-- Memory Pool trails are still mostly decorative (fill bar is live)
+- Random Recall parameter exists but is unused
+- Stereo Link is fixed independent per-channel histories
 - Factory presets not yet included
-- Unit tests are stubs and are not wired into CMake yet
 
 ---
 
 ## Development roadmap
 
 1. **Phase 1** — Project foundation ✅
-2. **Phase 2** — STFT engine (transparent unity processing + latency) ✅
-3. **Phase 3** — Spectral history buffer integration ← *current*
-4. **Phase 4** — Shadow mode
-5. **Phase 5** — Erase + Merge + mode crossfade
-6. **Phase 6** — Blur, Forget, transient preservation
-7. **Phase 7** — Memory Pool visualization + metering
+2. **Phase 2** — STFT engine ✅
+3. **Phase 3** — Spectral history buffer integration ✅
+4. **Phase 4** — Shadow mode ✅
+5. **Phase 5** — Erase + Merge + mode crossfade ← *current*
+6. **Phase 6** — Forget / transient polish, Random Recall
+7. **Phase 7** — Memory Well polish (largely done)
 8. **Phase 8** — Presets and polish
 
 ---

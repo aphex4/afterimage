@@ -3,6 +3,8 @@
 #include "STFTProcessor.h"
 #include "SpectralHistoryBuffer.h"
 #include "SpectralModes.h"
+#include "ParameterSmoother.h"
+#include "VisualizationAtomics.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
@@ -15,11 +17,10 @@ namespace afterimage
 {
 
 /**
-    Owns the STFT, per-channel spectral history, and mode processor.
+    STFT + per-channel spectral history + Shadow mode.
 
-    Phase 3: captures magnitude/phase frames into history each hop.
-             Spectrum itself remains unmodified (transparent STFT).
-    Phase 4+: mode algorithms rewrite magnitudes before the inverse FFT.
+    Audio-thread only for history mutation. UI reads VisualizationAtomics.
+    History is read BEFORE committing the current analysis frame.
 */
 class SpectralEngine
 {
@@ -28,23 +29,38 @@ public:
     void reset();
     void releaseResources();
 
-    /** In-place STFT. Phase 3 stores history; spectrum stays identity. */
-    void process (juce::AudioBuffer<float>& buffer, const ModeParams& params, SpectralMode mode);
+    /** Set spectral parameter targets (from APVTS). Advanced per FFT hop. */
+    void setSpectralParameterTargets (float influence,
+                                      float recall,
+                                      float forget,
+                                      float blur,
+                                      float transientPreserve,
+                                      float randomRecall,
+                                      bool freeze) noexcept;
 
-    void setFrozen (bool shouldFreeze) noexcept;
-    void clearHistory();
+    void setMode (SpectralMode mode) noexcept;
     void setActiveMemoryLengthSeconds (float seconds) noexcept;
 
-    [[nodiscard]] int getLatencySamples() const noexcept { return stft_.getLatencySamples(); }
-    [[nodiscard]] int getNumHistoryChannels() const noexcept { return static_cast<int> (histories_.size()); }
+    /** Message-thread safe: request a clear; consumed on the audio thread. */
+    void requestClearHistory() noexcept { clearHistoryRequested_.store (true, std::memory_order_release); }
 
+    void process (juce::AudioBuffer<float>& buffer) noexcept;
+
+    [[nodiscard]] int getLatencySamples() const noexcept { return stft_.getLatencySamples(); }
+    [[nodiscard]] int getHopSize() const noexcept { return stft_.getHopSize(); }
+    [[nodiscard]] STFTProcessor& getSTFT() noexcept { return stft_; }
+    [[nodiscard]] const STFTProcessor& getSTFT() const noexcept { return stft_; }
+    [[nodiscard]] SpectralModeProcessor& getModeProcessor() noexcept { return modes_; }
+    [[nodiscard]] const SpectralModeProcessor& getModeProcessor() const noexcept { return modes_; }
+
+    [[nodiscard]] VisualizationAtomics& getVisualization() noexcept { return viz_; }
+    [[nodiscard]] const VisualizationAtomics& getVisualization() const noexcept { return viz_; }
+    [[nodiscard]] SnapshotPublisher& getSnapshotPublisher() noexcept { return snapshots_; }
+    [[nodiscard]] const SnapshotPublisher& getSnapshotPublisher() const noexcept { return snapshots_; }
+
+    /** Audio-thread only. */
     [[nodiscard]] SpectralHistoryBuffer& getHistory (int channel = 0) noexcept;
     [[nodiscard]] const SpectralHistoryBuffer& getHistory (int channel = 0) const noexcept;
-
-    [[nodiscard]] STFTProcessor& getSTFT() noexcept { return stft_; }
-
-    /** Approximate fill of the active memory window [0,1] for UI. */
-    [[nodiscard]] float getHistoryFillAmount (int channel = 0) const noexcept;
 
 private:
     static void spectrumCallback (void* userData,
@@ -53,23 +69,33 @@ private:
                                   int channelIndex) noexcept;
 
     void onSpectrum (float* interleavedFftData, int fftSize, int channelIndex) noexcept;
+    void clearHistoryOnAudioThread() noexcept;
+    void publishVisualization (int channelIndex) noexcept;
 
     STFTProcessor stft_;
     std::vector<std::unique_ptr<SpectralHistoryBuffer>> histories_;
     SpectralModeProcessor modes_;
+    ParameterSmoother frameSmoothers_;
 
-    // Per-channel previous magnitudes for spectral-flux transient estimate.
+    SpectralFrame workingFrame_;
+    SpectralFrame analysisForHistory_; // unmodified analysis pushed to history
+    std::vector<float> historyMagsScratch_;
     std::vector<std::vector<float>> previousMagnitudes_;
     std::vector<bool> hasPreviousFrame_;
-
     std::vector<std::uint64_t> frameCounters_;
 
+    VisualizationAtomics viz_;
+    SnapshotPublisher snapshots_;
+    std::atomic<bool> clearHistoryRequested_ { false };
+    ModeParams hopParams_ {};
+    SpectralMode currentMode_ = SpectralMode::Shadow;
+    float memoryLengthSeconds_ = constants::memoryLengthDefaultSec;
+    std::uint32_t vizSequence_ = 0;
+
+    bool freezeTarget_ = false;
     double sampleRate_ = 44100.0;
     int numChannels_ = 2;
     bool prepared_ = false;
-
-    ModeParams pendingParams_ {};
-    SpectralMode pendingMode_ = SpectralMode::Shadow;
 };
 
 } // namespace afterimage

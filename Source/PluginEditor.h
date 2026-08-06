@@ -1,12 +1,15 @@
 #pragma once
 
 #include "PluginProcessor.h"
+#include "UI/AfterimageKnob.h"
 #include "UI/AfterimageLookAndFeel.h"
-#include "UI/MemoryPoolComponent.h"
+#include "UI/MemoryWellComponent.h"
 #include "UI/ModeSelector.h"
 #include "UI/SpectrumDisplay.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
+
+#include <vector>
 
 class AfterimageAudioProcessorEditor : public juce::AudioProcessorEditor,
                                        private juce::Timer
@@ -20,34 +23,32 @@ public:
 
 private:
     void timerCallback() override;
-    void buildControls();
+    void buildDock();
+    void wireRecall();
 
     AfterimageAudioProcessor& audioProcessor;
     AfterimageLookAndFeel lookAndFeel;
 
     juce::Label titleLabel;
     juce::Label taglineLabel;
+    juce::Label cpuLabel;
 
     ModeSelector modeSelector;
     SpectrumDisplay meterDisplay;
-    MemoryPoolComponent memoryPool;
+    MemoryWellComponent memoryWell;
 
     juce::ToggleButton freezeButton { "FREEZE" };
     juce::ToggleButton bypassButton { "BYPASS" };
 
-    struct Knob
-    {
-        juce::Slider slider;
-        juce::Label  nameLabel;
-        juce::Label  valueLabel;
-        std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachment;
-    };
-
-    std::vector<std::unique_ptr<Knob>> knobs;
+    std::vector<std::unique_ptr<AfterimageKnob>> knobs;
+    juce::Rectangle<float> dockBounds_;
 
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> freezeAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> bypassAttachment;
     std::unique_ptr<juce::ParameterAttachment> modeParamAttachment;
+    std::unique_ptr<juce::ParameterAttachment> recallParamAttachment;
+
+    afterimage::VisualizationSnapshot snapCache_ {};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AfterimageAudioProcessorEditor)
 };

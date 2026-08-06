@@ -106,7 +106,7 @@ void MemoryPoolComponent::paint (juce::Graphics& g)
 
     g.setColour (AfterimageLookAndFeel::textMuted().withAlpha (0.45f));
     g.setFont (juce::FontOptions (10.0f));
-    g.drawFittedText ("Spectral history active — modes arrive in Phase 4",
+    g.drawFittedText ("SHADOW active — ERASE / MERGE coming soon",
                       bounds.reduced (16.0f).removeFromBottom (28).toNearestInt(),
                       juce::Justification::centred, 1);
 }

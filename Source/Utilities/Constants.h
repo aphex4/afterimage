@@ -45,11 +45,13 @@ namespace constants
     // -------------------------------------------------------------------------
     // UI
     // -------------------------------------------------------------------------
-    constexpr int    editorDefaultWidth  = 900;
-    constexpr int    editorDefaultHeight = 600;
-    constexpr int    editorMinWidth      = 720;
-    constexpr int    editorMinHeight     = 480;
-    constexpr int    uiTimerHz           = 30;
+    constexpr int    editorDefaultWidth  = 1000;
+    constexpr int    editorDefaultHeight = 720;
+    constexpr int    editorMinWidth      = 800;
+    constexpr int    editorMinHeight     = 560;
+    constexpr int    uiTimerHz           = 60;
+    constexpr int    maxInternalBlockSize = 2048; // chunk size for oversized host callbacks
+
 
     // -------------------------------------------------------------------------
     // Parameter IDs (stable — do not rename)

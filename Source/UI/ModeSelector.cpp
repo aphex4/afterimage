@@ -6,13 +6,21 @@ ModeSelector::ModeSelector()
     {
         b.setClickingTogglesState (true);
         b.setRadioGroupId (1001);
+        b.setEnabled (true);
         addAndMakeVisible (b);
-        b.onClick = [this, mode] { handleClick (mode); };
+        b.onClick = [this, mode]
+        {
+            handleClick (mode);
+        };
     };
 
     setup (shadowButton, afterimage::SpectralMode::Shadow);
     setup (eraseButton,  afterimage::SpectralMode::Erase);
     setup (mergeButton,  afterimage::SpectralMode::Merge);
+
+    shadowButton.setTooltip ("Shadow — additive spectral ghost of recalled memory");
+    eraseButton.setTooltip ("Erase — carve holes where memory overlaps the present");
+    mergeButton.setTooltip ("Merge — morph the present toward recalled memory");
 
     syncToggleStates();
 }

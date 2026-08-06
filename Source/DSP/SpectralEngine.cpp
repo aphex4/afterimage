@@ -11,7 +11,11 @@ void SpectralEngine::prepare (double sampleRate, int maxBlockSize, int numChanne
     numChannels_ = std::max (1, numChannels);
 
     stft_.prepare (sampleRate, maxBlockSize, numChannels_);
-    modes_.prepare (constants::numBins);
+    modes_.prepare (constants::numBins, sampleRate, numChannels_);
+    workingFrame_.prepare (constants::numBins);
+    analysisForHistory_.prepare (constants::numBins);
+    historyMagsScratch_.assign (static_cast<std::size_t> (constants::numBins), 0.0f);
+    frameSmoothers_.prepareFrameSmoothers (sampleRate);
 
     histories_.clear();
     histories_.reserve (static_cast<std::size_t> (numChannels_));
@@ -24,13 +28,12 @@ void SpectralEngine::prepare (double sampleRate, int maxBlockSize, int numChanne
         auto hist = std::make_unique<SpectralHistoryBuffer>();
         hist->prepare (sampleRate, stft_.getHopSize(), constants::memoryLengthMaxSec);
         histories_.push_back (std::move (hist));
-
         previousMagnitudes_[static_cast<std::size_t> (c)].assign (
             static_cast<std::size_t> (constants::numBins), 0.0f);
     }
 
     stft_.setSpectrumCallback (&SpectralEngine::spectrumCallback, this);
-
+    clearHistoryRequested_.store (false, std::memory_order_relaxed);
     prepared_ = true;
     reset();
 }
@@ -39,6 +42,10 @@ void SpectralEngine::reset()
 {
     stft_.reset();
     modes_.reset();
+    modes_.setMode (currentMode_);
+    workingFrame_.clear();
+    analysisForHistory_.clear();
+    std::fill (historyMagsScratch_.begin(), historyMagsScratch_.end(), 0.0f);
     std::fill (frameCounters_.begin(), frameCounters_.end(), 0);
 
     for (auto& hist : histories_)
@@ -57,13 +64,35 @@ void SpectralEngine::releaseResources()
     prepared_ = false;
 }
 
-void SpectralEngine::setFrozen (bool shouldFreeze) noexcept
+void SpectralEngine::setSpectralParameterTargets (float influence,
+                                                  float recall,
+                                                  float forget,
+                                                  float blur,
+                                                  float transientPreserve,
+                                                  float randomRecall,
+                                                  bool freeze) noexcept
 {
+    frameSmoothers_.setSpectralTargets (influence, recall, forget, blur, transientPreserve, randomRecall);
+    freezeTarget_ = freeze;
+
     for (auto& hist : histories_)
-        hist->setFrozen (shouldFreeze);
+        hist->setFrozen (freeze);
 }
 
-void SpectralEngine::clearHistory()
+void SpectralEngine::setMode (SpectralMode mode) noexcept
+{
+    currentMode_ = mode;
+    modes_.setMode (mode);
+}
+
+void SpectralEngine::setActiveMemoryLengthSeconds (float seconds) noexcept
+{
+    memoryLengthSeconds_ = seconds;
+    for (auto& hist : histories_)
+        hist->setActiveMemoryLengthSeconds (seconds);
+}
+
+void SpectralEngine::clearHistoryOnAudioThread() noexcept
 {
     for (auto& hist : histories_)
         hist->clear();
@@ -73,12 +102,7 @@ void SpectralEngine::clearHistory()
 
     std::fill (hasPreviousFrame_.begin(), hasPreviousFrame_.end(), false);
     std::fill (frameCounters_.begin(), frameCounters_.end(), 0);
-}
-
-void SpectralEngine::setActiveMemoryLengthSeconds (float seconds) noexcept
-{
-    for (auto& hist : histories_)
-        hist->setActiveMemoryLengthSeconds (seconds);
+    viz_.storeHistoryFill (0.0f);
 }
 
 SpectralHistoryBuffer& SpectralEngine::getHistory (int channel) noexcept
@@ -95,37 +119,86 @@ const SpectralHistoryBuffer& SpectralEngine::getHistory (int channel) const noex
     return *histories_[static_cast<std::size_t> (idx)];
 }
 
-float SpectralEngine::getHistoryFillAmount (int channel) const noexcept
+void SpectralEngine::publishVisualization (int channelIndex) noexcept
 {
-    const auto& hist = getHistory (channel);
-    const int activeWindow = [&]
-    {
-        // Mirror getActiveFrameCount window size at full capacity.
-        const double framesPerSecond = sampleRate_ / static_cast<double> (stft_.getHopSize());
-        return std::max (1, static_cast<int> (std::ceil (framesPerSecond * hist.getActiveMemoryLengthSeconds())));
-    }();
+    if (channelIndex != 0 || histories_.empty())
+        return;
 
-    return juce::jlimit (0.0f, 1.0f,
-                         static_cast<float> (hist.getAvailableFrameCount())
-                             / static_cast<float> (activeWindow));
+    const auto& hist = *histories_.front();
+    const double framesPerSecond = sampleRate_ / static_cast<double> (stft_.getHopSize());
+    const int window = std::max (
+        1, static_cast<int> (std::ceil (framesPerSecond * hist.getActiveMemoryLengthSeconds())));
+    const float fill = static_cast<float> (hist.getAvailableFrameCount()) / static_cast<float> (window);
+
+    viz_.storeHistoryFill (fill);
+    viz_.storeTransient (workingFrame_.transientStrength);
+    viz_.storeCentroid (workingFrame_.spectralCentroid);
+
+    VisualizationSnapshot snap;
+    snap.historyFill = juce::jlimit (0.0f, 1.0f, fill);
+    snap.inputPeak = viz_.loadInputPeak();
+    snap.outputPeak = viz_.loadOutputPeak();
+    snap.transientStrength = workingFrame_.transientStrength;
+    snap.spectralCentroidHz = workingFrame_.spectralCentroid;
+    snap.memoryLengthNorm = juce::jlimit (
+        0.0f, 1.0f,
+        (memoryLengthSeconds_ - constants::memoryLengthMinSec)
+            / (constants::memoryLengthMaxSec - constants::memoryLengthMinSec));
+    snap.frozen = freezeTarget_;
+    snap.sequence = ++vizSequence_;
+    snap.numSeeds = 0;
+
+    // Peak-bin particle seeds for Memory Well (ch0 only; no alloc).
+    const auto& mags = workingFrame_.magnitudes;
+    const int numBins = static_cast<int> (mags.size());
+    float maxMag = 1.0e-8f;
+    for (int k = 1; k < numBins; ++k)
+        maxMag = juce::jmax (maxMag, mags[static_cast<std::size_t> (k)]);
+
+    const float nyquist = static_cast<float> (sampleRate_ * 0.5);
+    const float centroidNorm = juce::jlimit (
+        0.0f, 1.0f, snap.spectralCentroidHz / juce::jmax (1.0f, nyquist));
+
+    const int stride = juce::jmax (1, numBins / (VisualizationSnapshot::maxSeeds * 2));
+    for (int k = 1; k < numBins && snap.numSeeds < VisualizationSnapshot::maxSeeds; k += stride)
+    {
+        int peakBin = k;
+        float peakMag = mags[static_cast<std::size_t> (k)];
+        const int end = juce::jmin (numBins, k + stride);
+        for (int j = k + 1; j < end; ++j)
+        {
+            const float m = mags[static_cast<std::size_t> (j)];
+            if (m > peakMag)
+            {
+                peakMag = m;
+                peakBin = j;
+            }
+        }
+
+        if (peakMag < maxMag * 0.08f)
+            continue;
+
+        auto& seed = snap.seeds[snap.numSeeds++];
+        const float freqLin = static_cast<float> (peakBin) / static_cast<float> (juce::jmax (1, numBins - 1));
+        seed.freqNorm = std::sqrt (freqLin); // mild perceptual bias toward highs
+        seed.magnitude = juce::jlimit (0.0f, 1.0f, peakMag / maxMag);
+        seed.transient = workingFrame_.transientStrength;
+        seed.centroidNorm = centroidNorm;
+    }
+
+    snapshots_.publish (snap);
 }
 
-void SpectralEngine::process (juce::AudioBuffer<float>& buffer,
-                              const ModeParams& params,
-                              SpectralMode mode)
+void SpectralEngine::process (juce::AudioBuffer<float>& buffer) noexcept
 {
+    jassert (prepared_);
     if (! prepared_)
         return;
 
-    pendingParams_ = params;
-    pendingMode_ = mode;
+    if (clearHistoryRequested_.exchange (false, std::memory_order_acq_rel))
+        clearHistoryOnAudioThread();
 
-    setFrozen (params.freeze);
-
-    // Phase 3: STFT + history capture via spectrumCallback. Spectrum unchanged.
     stft_.process (buffer);
-
-    juce::ignoreUnused (pendingMode_);
 }
 
 void SpectralEngine::spectrumCallback (void* userData,
@@ -133,36 +206,42 @@ void SpectralEngine::spectrumCallback (void* userData,
                                        int fftSize,
                                        int channelIndex) noexcept
 {
-    auto* self = static_cast<SpectralEngine*> (userData);
-    self->onSpectrum (interleavedFftData, fftSize, channelIndex);
+    static_cast<SpectralEngine*> (userData)->onSpectrum (interleavedFftData, fftSize, channelIndex);
 }
 
 void SpectralEngine::onSpectrum (float* interleavedFftData, int fftSize, int channelIndex) noexcept
 {
+    jassert (fftSize == constants::fftSize);
+    jassert (interleavedFftData != nullptr);
+
     if (channelIndex < 0 || channelIndex >= static_cast<int> (histories_.size()))
         return;
 
+    // Advance spectral smoothers once per hop (channel 0 only); share params for L/R.
+    if (channelIndex == 0)
+    {
+        hopParams_ = frameSmoothers_.snapSpectralParamsForHop (stft_.getHopSize(), freezeTarget_);
+        hopParams_.recallAge01 = juce::jlimit (0.0f, 1.0f, hopParams_.recallPosition);
+        // Random Recall intentionally unused (Phase 6).
+    }
+
     auto& hist = *histories_[static_cast<std::size_t> (channelIndex)];
 
-    // Freeze: keep processing audio, but stop writing new memory.
-    SpectralFrame* slot = hist.beginWriteFrame();
-    if (slot == nullptr)
-        return;
+    workingFrame_.fillFromInterleavedFFT (interleavedFftData, fftSize);
+    workingFrame_.frameIndex = frameCounters_[static_cast<std::size_t> (channelIndex)];
+    workingFrame_.computeRmsAndCentroid (sampleRate_, fftSize);
 
-    slot->fillFromInterleavedFFT (interleavedFftData, fftSize);
-    slot->frameIndex = frameCounters_[static_cast<std::size_t> (channelIndex)]++;
-    slot->computeRmsAndCentroid (sampleRate_, fftSize);
-
-    // Spectral flux vs previous frame → transientStrength in [0,1].
     auto& prev = previousMagnitudes_[static_cast<std::size_t> (channelIndex)];
     const bool hadPrev = hasPreviousFrame_[static_cast<std::size_t> (channelIndex)];
     double flux = 0.0;
     double denom = 0.0;
+    const int numBins = static_cast<int> (workingFrame_.magnitudes.size());
+    jassert (numBins == constants::numBins);
 
-    const int numBins = static_cast<int> (slot->magnitudes.size());
     for (int k = 0; k < numBins; ++k)
     {
-        const float mag = slot->magnitudes[static_cast<std::size_t> (k)];
+        const float mag = workingFrame_.magnitudes[static_cast<std::size_t> (k)];
+        jassert (std::isfinite (mag));
         const float previous = hadPrev ? prev[static_cast<std::size_t> (k)] : mag;
         const float diff = mag - previous;
         if (diff > 0.0f)
@@ -172,14 +251,56 @@ void SpectralEngine::onSpectrum (float* interleavedFftData, int fftSize, int cha
     }
 
     hasPreviousFrame_[static_cast<std::size_t> (channelIndex)] = true;
-
     const float raw = (denom > 1.0e-9) ? static_cast<float> (flux / denom) : 0.0f;
-    slot->transientStrength = juce::jlimit (0.0f, 1.0f, raw * 4.0f); // gentle scale
+    workingFrame_.transientStrength = juce::jlimit (0.0f, 1.0f, raw * 4.0f);
 
-    hist.commitWriteFrame();
+    // Keep unmodified analysis for history (Shadow must not pollute the memory well).
+    analysisForHistory_.copyFrom (workingFrame_);
 
-    // Phase 3: leave interleaved FFT data untouched for transparent reconstruction.
-    juce::ignoreUnused (pendingParams_);
+    ModeParams params = hopParams_;
+    params.transientStrength = workingFrame_.transientStrength;
+
+    const bool hasHistory = hist.getAvailableFrameCount() > 0;
+
+    if (hasHistory)
+    {
+        // READ history BEFORE push — age 0 is newest committed frame, not this write.
+        hist.getInterpolatedMagnitudes (params.recallAge01,
+                                        historyMagsScratch_.data(),
+                                        numBins);
+
+        const bool wroteSpectrum = modes_.process (currentMode_,
+                                                   workingFrame_,
+                                                   params,
+                                                   historyMagsScratch_.data(),
+                                                   channelIndex,
+                                                   stft_.getHopSize());
+
+        if (wroteSpectrum)
+        {
+            writeInterleavedFromMagnitudePhase (interleavedFftData,
+                                                fftSize,
+                                                workingFrame_.magnitudes.data(),
+                                                workingFrame_.phases.data(),
+                                                numBins);
+        }
+    }
+    else if (channelIndex == 0)
+    {
+        // Empty history: identity STFT; still advance mode crossfade.
+        modes_.setMode (currentMode_);
+        modes_.tickModeCrossfade (stft_.getHopSize());
+    }
+
+    // Push unmodified analysis (Freeze skips via beginWriteFrame — no invalid refs).
+    if (SpectralFrame* slot = hist.beginWriteFrame())
+    {
+        slot->copyFrom (analysisForHistory_);
+        slot->frameIndex = frameCounters_[static_cast<std::size_t> (channelIndex)]++;
+        hist.commitWriteFrame();
+    }
+
+    publishVisualization (channelIndex);
 }
 
 } // namespace afterimage

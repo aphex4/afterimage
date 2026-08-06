@@ -4,27 +4,26 @@
 void SpectrumDisplay::paint (juce::Graphics& g)
 {
     auto bounds = getLocalBounds().toFloat().reduced (1.0f);
-    g.setColour (AfterimageLookAndFeel::panel());
-    g.fillRoundedRectangle (bounds, 4.0f);
-    g.setColour (AfterimageLookAndFeel::panelEdge());
-    g.drawRoundedRectangle (bounds, 4.0f, 1.0f);
+    g.setColour (AfterimageLookAndFeel::panel().withAlpha (0.85f));
+    g.fillRoundedRectangle (bounds, 6.0f);
+    g.setColour (AfterimageLookAndFeel::glassEdge().withAlpha (0.25f));
+    g.drawRoundedRectangle (bounds, 6.0f, 1.0f);
 
-    auto meterArea = bounds.reduced (6.0f);
-    const float mid = meterArea.getCentreX();
+    auto meterArea = bounds.reduced (7.0f, 8.0f);
 
     auto drawBar = [&g] (juce::Rectangle<float> area, float level, juce::Colour colour)
     {
         g.setColour (AfterimageLookAndFeel::meterTrack());
         g.fillRoundedRectangle (area, 2.0f);
 
-        auto fill = area.removeFromBottom (area.getHeight() * level);
+        const float h = area.getHeight() * juce::jlimit (0.0f, 1.0f, level);
+        auto fill = area.removeFromBottom (h);
         g.setColour (colour);
         g.fillRoundedRectangle (fill, 2.0f);
     };
 
-    drawBar (meterArea.removeFromLeft (meterArea.getWidth() * 0.42f),
-             inputLevel_, AfterimageLookAndFeel::accentViolet());
-    meterArea.removeFromLeft (meterArea.getWidth() * 0.2f);
-    juce::ignoreUnused (mid);
+    auto inArea = meterArea.removeFromLeft (meterArea.getWidth() * 0.4f);
+    meterArea.removeFromLeft (meterArea.getWidth() * 0.25f);
+    drawBar (inArea, inputLevel_, AfterimageLookAndFeel::accentViolet());
     drawBar (meterArea, outputLevel_, AfterimageLookAndFeel::accentCyan());
 }

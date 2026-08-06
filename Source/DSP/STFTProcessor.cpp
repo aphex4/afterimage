@@ -5,12 +5,40 @@
 namespace afterimage
 {
 
+void STFTProcessor::buildWolaTable() noexcept
+{
+    // Per hop-phase COLA of window^2:
+    //   for n in [0, hop):  sum_k w[n + k*hop]^2
+    double minSum = 1.0e9;
+    double maxSum = 0.0;
+
+    for (int n = 0; n < hopSize; ++n)
+    {
+        double sum = 0.0;
+        for (int idx = n; idx < fftSize; idx += hopSize)
+        {
+            const double w = static_cast<double> (window_[static_cast<size_t> (idx)]);
+            sum += w * w;
+        }
+
+        jassert (sum > 1.0e-9);
+        wolaScaleTable_[static_cast<size_t> (n)] = static_cast<float> (1.0 / sum);
+        minSum = std::min (minSum, sum);
+        maxSum = std::max (maxSum, sum);
+    }
+
+    const double mid = 0.5 * (minSum + maxSum);
+    wolaMaxDeviation_ = (mid > 1.0e-9)
+                            ? static_cast<float> ((maxSum - minSum) / mid)
+                            : 0.0f;
+}
+
 void STFTProcessor::prepare (double sampleRate, int /*maxBlockSize*/, int numChannels)
 {
     sampleRate_  = sampleRate;
     numChannels_ = std::max (1, numChannels);
 
-    // Symmetric Hann: zeros at both ends → clean ring-buffer boundaries.
+    // Symmetric Hann (zeros at ends).
     for (int i = 0; i < fftSize; ++i)
     {
         window_[static_cast<size_t> (i)] =
@@ -19,23 +47,7 @@ void STFTProcessor::prepare (double sampleRate, int /*maxBlockSize*/, int numCha
                                      / static_cast<float> (fftSize - 1)));
     }
 
-    // Measure COLA of window² at a mid-window sample (hop = N/4 → constant).
-    {
-        double sum = 0.0;
-        const int mid = fftSize / 2;
-        for (int m = -fftSize; m <= fftSize; m += hopSize)
-        {
-            const int idx = mid + m;
-            if (idx >= 0 && idx < fftSize)
-            {
-                const double w = static_cast<double> (window_[static_cast<size_t> (idx)]);
-                sum += w * w;
-            }
-        }
-        wolaScale_ = (sum > 1.0e-9) ? static_cast<float> (1.0 / sum) : 1.0f;
-    }
-
-    // One full ring before a written sample is consumed from the OLA buffer.
+    buildWolaTable();
     latencySamples_ = fftSize;
 
     channels_.clear();
@@ -66,7 +78,9 @@ void STFTProcessor::setSpectrumCallback (SpectrumCallback callback, void* userDa
 
 void STFTProcessor::processFrame (Channel& ch, int channelIndex) noexcept
 {
-    // Oldest → newest fftSize samples from the input ring, analysis-windowed.
+    jassert (prepared_);
+    jassert (static_cast<int> (ch.fftBuf.size()) >= 2 * fftSize);
+
     for (int i = 0; i < fftSize; ++i)
     {
         const int idx = (ch.pos + i) % fftSize;
@@ -79,10 +93,20 @@ void STFTProcessor::processFrame (Channel& ch, int channelIndex) noexcept
 
     ch.fft.performRealOnlyForwardTransform (ch.fftBuf.data(), false);
 
+#if JUCE_DEBUG
+    for (int i = 0; i < 2 * fftSize; ++i)
+        jassert (std::isfinite (ch.fftBuf[static_cast<size_t> (i)]));
+#endif
+
     if (spectrumCallback_ != nullptr)
         spectrumCallback_ (spectrumUserData_, ch.fftBuf.data(), fftSize, channelIndex);
 
-    ch.fft.performRealOnlyInverseTransform (ch.fftBuf.data()); // includes 1/N
+    ch.fft.performRealOnlyInverseTransform (ch.fftBuf.data());
+
+#if JUCE_DEBUG
+    for (int i = 0; i < fftSize; ++i)
+        jassert (std::isfinite (ch.fftBuf[static_cast<size_t> (i)]));
+#endif
 
     for (int i = 0; i < fftSize; ++i)
     {
@@ -99,6 +123,7 @@ void STFTProcessor::process (juce::AudioBuffer<float>& buffer) noexcept
 
     const int numCh = juce::jmin (buffer.getNumChannels(), static_cast<int> (channels_.size()));
     const int n     = buffer.getNumSamples();
+    jassert (numCh >= 1);
 
     for (int c = 0; c < numCh; ++c)
     {
@@ -109,9 +134,13 @@ void STFTProcessor::process (juce::AudioBuffer<float>& buffer) noexcept
         {
             ch.inRing[static_cast<size_t> (ch.pos)] = data[s];
 
-            const float out = ch.outRing[static_cast<size_t> (ch.pos)] * wolaScale_;
+            const int phase = ch.pos % hopSize;
+            const float out = ch.outRing[static_cast<size_t> (ch.pos)]
+                            * wolaScaleTable_[static_cast<size_t> (phase)];
             ch.outRing[static_cast<size_t> (ch.pos)] = 0.0f;
             data[s] = ch.primed ? out : 0.0f;
+
+            jassert (std::isfinite (data[s]));
 
             ch.pos = (ch.pos + 1) % fftSize;
 
