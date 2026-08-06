@@ -1,33 +1,42 @@
 #include "PluginEditor.h"
+#include "UI/AfterimageFonts.h"
 #include "Utilities/Constants.h"
 
 namespace
 {
-struct DockSpec
+const AfterimageAudioProcessorEditor::DockItem* dockItems()
 {
-    const char* name;
-    const char* id;
-    const char* tip;
-};
+    // Tips use ASCII only (no em/en dashes, no smart quotes).
+    static const AfterimageAudioProcessorEditor::DockItem items[] = {
+        { "MEMORY", afterimage::constants::idMemoryLength,
+          "MEMORY\nHow far back searchable spectral history extends (0.1 to 10 s).",
+          AfterimageAudioProcessorEditor::DockGroup::Memory },
+        { "FORGET", afterimage::constants::idForget,
+          "FORGET\nHow quickly older recalled frames lose weight.",
+          AfterimageAudioProcessorEditor::DockGroup::Memory },
+        { "INFLUENCE", afterimage::constants::idInfluence,
+          "INFLUENCE\nHow strongly recalled memory affects the current spectrum. 0% is transparent.",
+          AfterimageAudioProcessorEditor::DockGroup::Spectral },
+        { "BLUR", afterimage::constants::idBlur,
+          "BLUR\nSmooths history magnitudes across neighboring frequency bins.",
+          AfterimageAudioProcessorEditor::DockGroup::Spectral },
+        { "TRANSIENT", afterimage::constants::idTransientPreserve,
+          "TRANSIENT\nPreserves attacks by reducing influence when transients are detected.",
+          AfterimageAudioProcessorEditor::DockGroup::Spectral },
+        { "RANDOM", afterimage::constants::idRandomRecall,
+          "RANDOM\nSlow smoothed wander around Recall Position.",
+          AfterimageAudioProcessorEditor::DockGroup::Spectral },
+        { "MIX", afterimage::constants::idMix,
+          "MIX\nEqual-power dry/wet blend. Dry is latency-aligned with the STFT.",
+          AfterimageAudioProcessorEditor::DockGroup::Output },
+        { "OUTPUT", afterimage::constants::idOutputGain,
+          "OUTPUT\nFinal gain trim after mix and bypass (-24 to +12 dB).",
+          AfterimageAudioProcessorEditor::DockGroup::Output },
+    };
+    return items;
+}
 
-const DockSpec kDockSpecs[] = {
-    { "MEMORY",    afterimage::constants::idMemoryLength,
-      "Memory Length — how far back the searchable spectral history extends (0.1–10 s)." },
-    { "INFLUENCE", afterimage::constants::idInfluence,
-      "Influence — strength of spectral interaction with recalled memory. 0% = transparent." },
-    { "FORGET",    afterimage::constants::idForget,
-      "Forget — how quickly older recalled frames lose weight." },
-    { "BLUR",      afterimage::constants::idBlur,
-      "Blur — smooth history magnitudes across neighboring frequency bins." },
-    { "TRANSIENT", afterimage::constants::idTransientPreserve,
-      "Transients — preserve attacks by reducing influence when transients are detected." },
-    { "RANDOM",    afterimage::constants::idRandomRecall,
-      "Random Recall — slow smoothed wander around Recall Position (not chaotic per-hop jumps)." },
-    { "MIX",       afterimage::constants::idMix,
-      "Mix — equal-power dry/wet blend (dry is latency-aligned with the STFT)." },
-    { "OUTPUT",    afterimage::constants::idOutputGain,
-      "Output — final gain trim after mix and bypass (−24…+12 dB)." },
-};
+constexpr int kDockCount = 8;
 } // namespace
 
 //==============================================================================
@@ -44,34 +53,26 @@ AfterimageAudioProcessorEditor::AfterimageAudioProcessorEditor (AfterimageAudioP
              afterimage::constants::editorDefaultHeight);
 
     titleLabel.setText ("AFTERIMAGE", juce::dontSendNotification);
-    titleLabel.setFont (juce::FontOptions (30.0f).withStyle ("Bold"));
+    titleLabel.setFont (AfterimageFonts::get (AfterimageFontRole::Wordmark));
     titleLabel.setColour (juce::Label::textColourId, AfterimageLookAndFeel::textPrimary());
     titleLabel.setJustificationType (juce::Justification::centredLeft);
+    titleLabel.setInterceptsMouseClicks (false, false);
     addAndMakeVisible (titleLabel);
 
-    taglineLabel.setText ("EVERY SOUND LEAVES A GHOST", juce::dontSendNotification);
-    taglineLabel.setFont (juce::FontOptions (10.5f));
-    taglineLabel.setColour (juce::Label::textColourId, AfterimageLookAndFeel::textMuted());
-    taglineLabel.setJustificationType (juce::Justification::centredLeft);
-    addAndMakeVisible (taglineLabel);
-
-    cpuLabel.setText ("CPU —", juce::dontSendNotification);
-    cpuLabel.setFont (juce::FontOptions (10.0f));
-    cpuLabel.setColour (juce::Label::textColourId, AfterimageLookAndFeel::textMuted());
-    cpuLabel.setJustificationType (juce::Justification::centredRight);
-    addAndMakeVisible (cpuLabel);
+    memoryStatusLabel.setText ("MEMORY 0%", juce::dontSendNotification);
+    memoryStatusLabel.setFont (AfterimageFonts::get (AfterimageFontRole::Status));
+    memoryStatusLabel.setColour (juce::Label::textColourId, AfterimageLookAndFeel::textMuted());
+    memoryStatusLabel.setJustificationType (juce::Justification::centredRight);
+    memoryStatusLabel.setInterceptsMouseClicks (false, false);
+    memoryStatusLabel.setTooltip ("MEMORY\nHow full the spectral history buffer currently is.");
+    addAndMakeVisible (memoryStatusLabel);
 
     buildPresetMenu();
 
     addAndMakeVisible (modeSelector);
     addAndMakeVisible (meterDisplay);
     addAndMakeVisible (memoryWell);
-    memoryWell.setTooltip ("Memory Well — scrub the Recall ring to choose history age (outer = newest).");
 
-    freezeButton.setClickingTogglesState (true);
-    bypassButton.setClickingTogglesState (true);
-    freezeButton.setTooltip ("Freeze — stop writing new spectral frames; keep recalling frozen memory.");
-    bypassButton.setTooltip ("Bypass — smoothed pass-through of latency-aligned dry signal.");
     addAndMakeVisible (freezeButton);
     addAndMakeVisible (bypassButton);
 
@@ -106,11 +107,7 @@ AfterimageAudioProcessorEditor::AfterimageAudioProcessorEditor (AfterimageAudioP
 
     wireRecall();
     buildDock();
-
-    // setSize() ran before dock knobs existed — lay them out now so they
-    // appear at the default window size without requiring a resize.
     resized();
-
     startTimerHz (afterimage::constants::uiTimerHz);
 }
 
@@ -123,7 +120,7 @@ AfterimageAudioProcessorEditor::~AfterimageAudioProcessorEditor()
 void AfterimageAudioProcessorEditor::buildPresetMenu()
 {
     presetBox.setTextWhenNothingSelected ("Preset");
-    presetBox.setTooltip ("Factory presets — parameter starting points only (history is cleared on load).");
+    presetBox.setTooltip ("PRESET\nFactory starting points. Parameters only; history clears on load.");
     for (int i = 0; i < afterimage::factory::kNumPresets; ++i)
         presetBox.addItem (afterimage::factory::kPresets[static_cast<std::size_t> (i)].name, i + 1);
 
@@ -173,13 +170,13 @@ void AfterimageAudioProcessorEditor::wireRecall()
 
 void AfterimageAudioProcessorEditor::buildDock()
 {
-    // Recall lives on the Memory Well ring — not in the dock.
-    for (const auto& spec : kDockSpecs)
+    const auto* specs = dockItems();
+    for (int i = 0; i < kDockCount; ++i)
     {
         auto knob = std::make_unique<AfterimageKnob>();
-        knob->setNameLabel (spec.name);
-        knob->setTooltip (spec.tip);
-        knob->attachToParameter (audioProcessor.getAPVTS(), spec.id);
+        knob->setNameLabel (specs[i].name);
+        knob->setTooltip (specs[i].tip);
+        knob->attachToParameter (audioProcessor.getAPVTS(), specs[i].id);
         addAndMakeVisible (*knob);
         knobs.push_back (std::move (knob));
     }
@@ -189,75 +186,110 @@ void AfterimageAudioProcessorEditor::paint (juce::Graphics& g)
 {
     auto bounds = getLocalBounds().toFloat();
 
-    juce::ColourGradient bg (AfterimageLookAndFeel::background().brighter (0.05f),
+    juce::ColourGradient bg (AfterimageLookAndFeel::background().brighter (0.04f),
                              bounds.getCentreX(), bounds.getY(),
-                             AfterimageLookAndFeel::background().darker (0.15f),
+                             AfterimageLookAndFeel::background().darker (0.12f),
                              bounds.getCentreX(), bounds.getBottom(),
                              false);
     g.setGradientFill (bg);
     g.fillAll();
 
-    // Soft vignette toward edges
-    g.setColour (juce::Colours::black.withAlpha (0.18f));
-    g.fillRect (bounds.removeFromLeft (28.0f));
+    g.setColour (juce::Colours::black.withAlpha (0.14f));
+    g.fillRect (bounds.removeFromLeft (20.0f));
     bounds = getLocalBounds().toFloat();
-    g.fillRect (bounds.removeFromRight (28.0f));
+    g.fillRect (bounds.removeFromRight (20.0f));
 
     if (! dockBounds_.isEmpty())
         AfterimageLookAndFeel::paintGlassDock (g, dockBounds_);
+
+    for (const auto& div : dockDividers_)
+        if (! div.isEmpty())
+            AfterimageLookAndFeel::paintDockDivider (g, div);
 }
 
 void AfterimageAudioProcessorEditor::resized()
 {
-    auto area = getLocalBounds().reduced (20);
+    const int W = getWidth();
+    const int H = getHeight();
+    const float scale = juce::jlimit (0.85f, 1.15f, (float) W / 1000.0f);
 
-    // Header
-    auto top = area.removeFromTop (58);
-    auto titleArea = top.removeFromLeft (260);
-    titleLabel.setBounds (titleArea.removeFromTop (34));
-    taglineLabel.setBounds (titleArea);
+    const int margin = juce::jmax (12, juce::roundToInt (18.0f * scale));
+    const int headerH = juce::jmax (44, juce::roundToInt (50.0f * scale));
+    const int dockH = juce::jmax (110, juce::roundToInt (124.0f * scale));
+    const int freezeH = juce::jmax (56, juce::roundToInt (68.0f * scale));
 
-    bypassButton.setBounds (top.removeFromRight (78).reduced (0, 14));
-    top.removeFromRight (10);
-    meterDisplay.setBounds (top.removeFromRight (52).reduced (0, 6));
+    auto area = getLocalBounds().reduced (margin);
+
+    // Header: wordmark | preset | modes | status | meters | bypass
+    auto top = area.removeFromTop (headerH);
+    const int titleW = juce::jlimit (140, 240, W / 5);
+    titleLabel.setBounds (top.removeFromLeft (titleW).reduced (0, juce::roundToInt (6.0f * scale)));
+
+    const int bypassW = juce::jmax (52, juce::roundToInt (58.0f * scale));
+    bypassButton.setBounds (top.removeFromRight (bypassW).reduced (2, juce::roundToInt (6.0f * scale)));
+    top.removeFromRight (6);
+    meterDisplay.setBounds (top.removeFromRight (juce::roundToInt (48.0f * scale))
+                                .reduced (0, juce::roundToInt (8.0f * scale)));
+    top.removeFromRight (6);
+    memoryStatusLabel.setBounds (top.removeFromRight (juce::jmax (72, juce::roundToInt (88.0f * scale)))
+                                      .reduced (0, juce::roundToInt (14.0f * scale)));
     top.removeFromRight (8);
-    cpuLabel.setBounds (top.removeFromRight (64).reduced (0, 16));
-    top.removeFromRight (12);
-    modeSelector.setBounds (top.removeFromRight (292).reduced (0, 12));
-    top.removeFromRight (10);
-    presetBox.setBounds (top.removeFromRight (168).reduced (0, 14));
 
-    // Bottom glass dock
-    auto dock = area.removeFromBottom (128);
-    area.removeFromBottom (6);
+    const int modeW = juce::jlimit (200, 300, top.getWidth() - 150);
+    modeSelector.setBounds (top.removeFromRight (modeW).reduced (0, juce::roundToInt (10.0f * scale)));
+    top.removeFromRight (8);
+    presetBox.setBounds (top.removeFromRight (juce::jmin (top.getWidth(), juce::roundToInt (150.0f * scale)))
+                             .reduced (0, juce::roundToInt (12.0f * scale)));
+
+    // Dock
+    auto dock = area.removeFromBottom (dockH);
+    area.removeFromBottom (juce::roundToInt (4.0f * scale));
     dockBounds_ = dock.toFloat();
-    auto dockInner = dock.reduced (16, 10);
+    auto dockInner = dock.reduced (juce::roundToInt (14.0f * scale), juce::roundToInt (8.0f * scale));
 
-    // Freeze sits centered under the well, above the dock
-    auto freezeRow = area.removeFromBottom (72);
-    freezeButton.setBounds (freezeRow.withSizeKeepingCentre (72, 72));
-    area.removeFromBottom (4);
+    // Freeze under well
+    auto freezeRow = area.removeFromBottom (freezeH);
+    const int freezeSize = juce::jmin (freezeRow.getHeight(), juce::roundToInt (68.0f * scale));
+    freezeButton.setBounds (freezeRow.withSizeKeepingCentre (freezeSize, freezeSize));
+    area.removeFromBottom (2);
 
-    // Memory Well fills remaining centre
     memoryWell.setBounds (area);
 
-    const int knobCount = static_cast<int> (knobs.size());
-    if (knobCount > 0)
+    // Grouped knobs: Memory(2) | Spectral(4) | Output(2)
+    dockDividers_ = {};
+    if ((int) knobs.size() == kDockCount)
     {
-        const int knobWidth = dockInner.getWidth() / knobCount;
-        for (int i = 0; i < knobCount; ++i)
+        const int gap = juce::roundToInt (10.0f * scale);
+        const int totalUnits = 2 + 4 + 2;
+        const int dividerSlots = 2;
+        const int usable = dockInner.getWidth() - gap * dividerSlots;
+        const float unit = (float) usable / (float) totalUnits;
+
+        auto placeGroup = [&] (int start, int count, DockGroup /*group*/)
         {
-            auto cell = dockInner.removeFromLeft (knobWidth).reduced (3, 0);
-            knobs[static_cast<std::size_t> (i)]->setBounds (cell);
-        }
+            const int groupW = juce::roundToInt (unit * (float) count);
+            auto groupArea = dockInner.removeFromLeft (groupW);
+            const int cellW = groupArea.getWidth() / count;
+            for (int i = 0; i < count; ++i)
+            {
+                auto cell = groupArea.removeFromLeft (cellW).reduced (2, 0);
+                knobs[static_cast<std::size_t> (start + i)]->setBounds (cell);
+            }
+        };
+
+        placeGroup (0, 2, DockGroup::Memory);
+        dockDividers_[0] = dockInner.removeFromLeft (gap).toFloat();
+        placeGroup (2, 4, DockGroup::Spectral);
+        dockDividers_[1] = dockInner.removeFromLeft (gap).toFloat();
+        placeGroup (6, 2, DockGroup::Output);
     }
+
+    juce::ignoreUnused (H);
 }
 
 void AfterimageAudioProcessorEditor::timerCallback()
 {
-    const float inLvl = audioProcessor.getInputLevel();
-    const float outLvl = audioProcessor.getOutputLevel();
-    meterDisplay.setLevels (inLvl, outLvl);
+    meterDisplay.setLevels (audioProcessor.getInputLevel(), audioProcessor.getOutputLevel());
 
     audioProcessor.getEngine().getSnapshotPublisher().copyLatest (snapCache_);
     memoryWell.applySnapshot (snapCache_);
@@ -266,7 +298,6 @@ void AfterimageAudioProcessorEditor::timerCallback()
         memoryWell.setInfluence (influence->load());
     if (auto* memory = audioProcessor.getAPVTS().getRawParameterValue (afterimage::constants::idMemoryLength))
     {
-        // Normalise 0.1..10s roughly for well feel (APVTS stores seconds as raw)
         const float sec = memory->load();
         const float norm = juce::jlimit (0.0f, 1.0f,
             (sec - afterimage::constants::memoryLengthMinSec)
@@ -274,23 +305,22 @@ void AfterimageAudioProcessorEditor::timerCallback()
         memoryWell.setMemoryLengthNorm (norm);
     }
 
-    // Lightweight CPU hint from host (when available)
-    if (auto* playHead = audioProcessor.getPlayHead())
-    {
-        // No reliable CPU meter from playhead — show activity instead
-        juce::ignoreUnused (playHead);
-    }
     const int activity = juce::roundToInt (snapCache_.historyFill * 100.0f);
-    cpuLabel.setText ("MEM " + juce::String (activity) + "%", juce::dontSendNotification);
+    const juce::String memText = "MEMORY " + juce::String (activity) + "%";
+    if (memText != cachedMemoryStatus_)
+    {
+        cachedMemoryStatus_ = memText;
+        memoryStatusLabel.setText (memText, juce::dontSendNotification);
+    }
 
-    // Keep preset box in sync if host/program API changed selection
     const int wantId = audioProcessor.getCurrentProgram() + 1;
     if (presetBox.getSelectedId() != wantId)
         presetBox.setSelectedId (wantId, juce::dontSendNotification);
 
-    for (size_t i = 0; i < knobs.size() && i < std::size (kDockSpecs); ++i)
+    const auto* specs = dockItems();
+    for (size_t i = 0; i < knobs.size() && i < (size_t) kDockCount; ++i)
     {
-        if (auto* param = audioProcessor.getAPVTS().getParameter (kDockSpecs[i].id))
+        if (auto* param = audioProcessor.getAPVTS().getParameter (specs[i].id))
             knobs[i]->setValueText (param->getCurrentValueAsText());
     }
 }

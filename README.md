@@ -137,6 +137,16 @@ build/AFTERIMAGE_artefacts/Release/VST3/AFTERIMAGE.vst3
 
 ---
 
+## UI notes
+
+- Typography uses host system geometric sans (`Avenir Next` on macOS). See `Assets/Fonts/README.md`.
+- Custom tooltips (dark elevated cards, ~550 ms delay) replace default JUCE bars.
+- Dock groups: Memory | Spectral processing | Output.
+- `EDITOR_WANTS_KEYBOARD_FOCUS` is **FALSE** so DAW hosts keep primary keyboard focus. In Standalone, the mode selector accepts arrow keys when focused.
+- Recall Ring: click/drag inside the Memory Well only; clicks outside do not change Recall.
+
+---
+
 ## Known limitations
 
 - **Stereo Link** deferred — L/R keep independent spectral histories

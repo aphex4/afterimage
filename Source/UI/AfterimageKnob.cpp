@@ -1,4 +1,5 @@
 #include "AfterimageKnob.h"
+#include "AfterimageFonts.h"
 #include "AfterimageLookAndFeel.h"
 
 AfterimageKnob::AfterimageKnob()
@@ -11,12 +12,14 @@ AfterimageKnob::AfterimageKnob()
 
     nameLabel.setJustificationType (juce::Justification::centred);
     nameLabel.setColour (juce::Label::textColourId, AfterimageLookAndFeel::textMuted());
-    nameLabel.setFont (juce::FontOptions (9.5f).withStyle ("Bold"));
+    nameLabel.setFont (AfterimageFonts::get (AfterimageFontRole::ControlLabel));
+    nameLabel.setInterceptsMouseClicks (false, false);
     addAndMakeVisible (nameLabel);
 
     valueLabel.setJustificationType (juce::Justification::centred);
     valueLabel.setColour (juce::Label::textColourId, AfterimageLookAndFeel::textPrimary().withAlpha (0.85f));
-    valueLabel.setFont (juce::FontOptions (10.5f));
+    valueLabel.setFont (AfterimageFonts::get (AfterimageFontRole::ParameterValue));
+    valueLabel.setInterceptsMouseClicks (false, false);
     addAndMakeVisible (valueLabel);
 }
 
@@ -27,14 +30,16 @@ void AfterimageKnob::setNameLabel (const juce::String& name)
 
 void AfterimageKnob::setValueText (const juce::String& text)
 {
+    if (text == cachedValueText_)
+        return;
+    cachedValueText_ = text;
     valueLabel.setText (text, juce::dontSendNotification);
 }
 
 void AfterimageKnob::setTooltip (const juce::String& tip)
 {
+    SettableTooltipClient::setTooltip (tip);
     slider.setTooltip (tip);
-    nameLabel.setTooltip (tip);
-    valueLabel.setTooltip (tip);
 }
 
 void AfterimageKnob::attachToParameter (juce::AudioProcessorValueTreeState& apvts, const juce::String& paramId)

@@ -14,7 +14,7 @@
 #include <vector>
 
 /**
-    AFTERIMAGE — Phase 2–3 validated processor.
+    AFTERIMAGE spectral memory processor (Shadow / Erase / Merge).
 
     Routing (documented):
       1) latency-aligned dry + wet (identity STFT)

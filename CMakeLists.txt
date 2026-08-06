@@ -54,10 +54,12 @@ juce_add_plugin(AFTERIMAGE
     NEEDS_MIDI_INPUT        FALSE
     NEEDS_MIDI_OUTPUT       FALSE
     IS_MIDI_EFFECT          FALSE
+    # Keep FALSE so DAW hosts retain primary keyboard focus. ModeSelector still
+    # accepts keys when it has focus inside the Standalone editor.
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
     COPY_PLUGIN_AFTER_BUILD TRUE
     VST3_CATEGORIES         "Fx Distortion Modulation"
-    DESCRIPTION             "Spectral memory processor — every sound leaves a ghost.")
+    DESCRIPTION             "Spectral memory processor. Every sound leaves a ghost.")
 
 juce_generate_juce_header(AFTERIMAGE)
 
@@ -65,8 +67,11 @@ target_sources(AFTERIMAGE PRIVATE
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp
     ${AFTERIMAGE_DSP_SOURCES}
+    Source/UI/AfterimageFonts.cpp
     Source/UI/AfterimageLookAndFeel.cpp
     Source/UI/AfterimageKnob.cpp
+    Source/UI/BypassButton.cpp
+    Source/UI/FreezeButton.cpp
     Source/UI/MemoryWellComponent.cpp
     Source/UI/SpectrumDisplay.cpp
     Source/UI/ModeSelector.cpp)

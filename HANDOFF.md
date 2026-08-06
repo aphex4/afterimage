@@ -48,7 +48,6 @@ Input
          write magnitudes back to FFT (keep current phase; Hermitian mirror)
          PUSH unmodified analysis frame into history (unless Freeze)
          IFFT → synthesis window → WOLA
-  → mild tanh soft-clip on wet
   → delay dry by STFT latency
   → equal-power dry/wet mix + output gain + smoothed bypass
   → Output
