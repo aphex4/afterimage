@@ -5,15 +5,29 @@
 #include "DSP/ParameterSmoother.h"
 #include "DSP/SpectralEngine.h"
 #include "DSP/SpectralModes.h"
+#include "DSP/DryWetMixer.h"
+#include "DSP/VisualizationAtomics.h"
 #include "Utilities/Constants.h"
+#include "Utilities/FactoryPresets.h"
+
+#if defined (AFTERIMAGE_ENABLE_LICENSING)
+#include "Licensing/LicenseManager.h"
+#endif
 
 #include <atomic>
+#include <vector>
 
 /**
-    AFTERIMAGE — Phase 1 foundation.
+    AFTERIMAGE spectral memory processor (Shadow / Erase / Merge).
 
-    Pass-through audio with APVTS, smoothed output gain / mix / bypass,
-    and a prepared (but inactive) SpectralEngine for later phases.
+    Routing (documented):
+      1) latency-aligned dry + wet (identity STFT)
+      2) equal-power dry/wet mix
+      3) bypass crossfade (toward latency-aligned dry)
+      4) final output gain  ← applied AFTER bypass so it always trims the audible output
+
+    Host callbacks larger than maxInternalBlockSize are processed in fixed chunks
+    using preallocated scratch (no audio-thread allocation).
 */
 class AfterimageAudioProcessor : public juce::AudioProcessor
 {
@@ -21,13 +35,11 @@ public:
     AfterimageAudioProcessor();
     ~AfterimageAudioProcessor() override = default;
 
-    //==============================================================================
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
     void releaseResources() override;
     bool isBusesLayoutSupported (const BusesLayout& layouts) const override;
     void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
 
-    //==============================================================================
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
 
@@ -37,40 +49,54 @@ public:
     bool isMidiEffect() const override { return false; }
     double getTailLengthSeconds() const override { return 0.0; }
 
-    int getNumPrograms() override { return 1; }
-    int getCurrentProgram() override { return 0; }
-    void setCurrentProgram (int) override {}
-    const juce::String getProgramName (int) override { return {}; }
-    void changeProgramName (int, const juce::String&) override {}
+    int getNumPrograms() override;
+    int getCurrentProgram() override;
+    void setCurrentProgram (int index) override;
+    const juce::String getProgramName (int index) override;
+    void changeProgramName (int index, const juce::String& newName) override;
 
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
 
-    //==============================================================================
     juce::AudioProcessorValueTreeState& getAPVTS() noexcept { return apvts; }
     afterimage::SpectralEngine& getEngine() noexcept { return engine; }
 
     afterimage::SpectralMode getCurrentMode() const noexcept;
 
-    float getInputLevel() const noexcept { return inputLevel.load (std::memory_order_relaxed); }
-    float getOutputLevel() const noexcept { return outputLevel.load (std::memory_order_relaxed); }
+    /** UI-safe visualization reads (atomics / snapshot publisher only). */
+    const afterimage::VisualizationAtomics& getVisualization() const noexcept { return engine.getVisualization(); }
+    afterimage::SnapshotPublisher& getSnapshotPublisher() noexcept { return engine.getSnapshotPublisher(); }
+
+    float getInputLevel() const noexcept  { return engine.getVisualization().loadInputPeak(); }
+    float getOutputLevel() const noexcept { return engine.getVisualization().loadOutputPeak(); }
+    float getHistoryFill() const noexcept { return engine.getVisualization().loadHistoryFill(); }
+
+#if defined (AFTERIMAGE_ENABLE_LICENSING)
+    afterimage::licensing::LicenseManager& getLicenseManager() noexcept { return licenseManager_; }
+#endif
 
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
 private:
-    void updateSmoothedTargets();
+    void updateParameterTargets();
+    void processChunk (juce::AudioBuffer<float>& wetChunk,
+                       juce::AudioBuffer<float>& dryInChunk,
+                       juce::AudioBuffer<float>& delayedDryChunk) noexcept;
 
     juce::AudioProcessorValueTreeState apvts;
     afterimage::SpectralEngine engine;
     afterimage::ParameterSmoother smoothers;
     afterimage::DryWetMixer dryWetMixer;
 
-    juce::AudioBuffer<float> dryBuffer;
+    juce::AudioBuffer<float> inputScratch;
+    juce::AudioBuffer<float> delayedDry;
+    std::vector<float*> wetPtrs_;
+    std::vector<float*> dryInPtrs_;
+    std::vector<float*> delayedPtrs_;
 
-    std::atomic<float> inputLevel  { 0.0f };
-    std::atomic<float> outputLevel { 0.0f };
+    int maxChannels_ = 2;
+    int maxChunk_ = afterimage::constants::maxInternalBlockSize;
 
-    // Cached raw parameter pointers (audio-thread safe reads).
     std::atomic<float>* pMode = nullptr;
     std::atomic<float>* pMemoryLength = nullptr;
     std::atomic<float>* pRecallPosition = nullptr;
@@ -83,6 +109,13 @@ private:
     std::atomic<float>* pOutputGain = nullptr;
     std::atomic<float>* pMix = nullptr;
     std::atomic<float>* pBypass = nullptr;
+
+    int currentProgram_ = 0;
+
+#if defined (AFTERIMAGE_ENABLE_LICENSING)
+    afterimage::licensing::LicenseManager licenseManager_;
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> entitlementDryAmount_;
+#endif
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AfterimageAudioProcessor)
 };

@@ -1,0 +1,96 @@
+#include "LicenseVerifier.h"
+
+#include "ThirdParty/monocypher/monocypher.h"
+#include "ThirdParty/monocypher/monocypher-ed25519.h"
+
+#include <cstring>
+
+namespace afterimage
+{
+namespace licensing
+{
+
+namespace
+{
+// Production public key slot — replace with real issuer key before commercial release.
+// Intentionally NOT a private key. All zeros means "production key not installed";
+// builds with AFTERIMAGE_USE_TEST_LICENSE_KEY use the test key instead.
+constexpr std::uint8_t kProductionPublicKey[32] = {
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+};
+
+#if defined (AFTERIMAGE_USE_TEST_LICENSE_KEY)
+// Deterministic test public key matching Tests/Fixtures/test_ed25519_seed.bin
+// Generated via AfterimageLicenseTool --gen-test-keys (seed = 32 × 0x42).
+constexpr std::uint8_t kTestPublicKey[32] = {
+    // Filled at first successful tool run; see LicensePublicKeys.inc if present.
+    #include "LicensePublicKeys.inc"
+};
+#else
+constexpr std::uint8_t kTestPublicKey[32] = {};
+#endif
+} // namespace
+
+LicenseVerifier::LicenseVerifier() = default;
+
+LicenseVerifier::~LicenseVerifier()
+{
+    crypto_wipe (publicKey_.data(), publicKey_.size());
+}
+
+void LicenseVerifier::setPublicKey (const std::uint8_t* publicKey32) noexcept
+{
+    if (publicKey32 == nullptr)
+    {
+        hasKey_ = false;
+        publicKey_.fill (0);
+        return;
+    }
+    std::memcpy (publicKey_.data(), publicKey32, 32);
+    hasKey_ = true;
+}
+
+bool LicenseVerifier::verify (const std::uint8_t* message,
+                              std::size_t messageSize,
+                              const std::uint8_t* signature64) const noexcept
+{
+    if (! hasKey_ || message == nullptr || signature64 == nullptr)
+        return false;
+
+    return crypto_ed25519_check (signature64, publicKey_.data(), message, messageSize) == 0;
+}
+
+#if defined (AFTERIMAGE_LICENSE_TOOL)
+void LicenseVerifier::sign (const std::uint8_t* message,
+                            std::size_t messageSize,
+                            const std::uint8_t* secretKey64,
+                            std::uint8_t* signatureOut64) noexcept
+{
+    crypto_ed25519_sign (signatureOut64, secretKey64, message, messageSize);
+}
+
+void LicenseVerifier::keyPairFromSeed (const std::uint8_t* seed32,
+                                       std::uint8_t* secretKeyOut64,
+                                       std::uint8_t* publicKeyOut32) noexcept
+{
+    std::uint8_t seedCopy[32];
+    std::memcpy (seedCopy, seed32, 32);
+    crypto_ed25519_key_pair (secretKeyOut64, publicKeyOut32, seedCopy);
+}
+#endif
+
+const std::uint8_t* getProductionPublicKey() noexcept
+{
+    return kProductionPublicKey;
+}
+
+const std::uint8_t* getTestPublicKey() noexcept
+{
+    return kTestPublicKey;
+}
+
+} // namespace licensing
+} // namespace afterimage

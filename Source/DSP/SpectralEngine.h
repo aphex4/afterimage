@@ -3,18 +3,37 @@
 #include "STFTProcessor.h"
 #include "SpectralHistoryBuffer.h"
 #include "SpectralModes.h"
-#include "DryWetMixer.h"
+#include "ParameterSmoother.h"
+#include "VisualizationAtomics.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
+
+#include <atomic>
+#include <cstdint>
+#include <memory>
+#include <vector>
 
 namespace afterimage
 {
 
 /**
-    Owns the STFT, spectral history, and mode processor.
+    Slow Random Recall wander: one-pole LPF on bipolar noise.
 
-    Phase 1: prepare/reset only — audio remains a pass-through in the
-    AudioProcessor. Phase 2+ routes audio through process().
+    @param wanderOffset  smoothed state in [-1, 1] (mutated)
+    @param rng           xorshift state (mutated)
+    @return effective recall age in [0, 1]
+*/
+[[nodiscard]] float computeRandomRecallAge (float& wanderOffset,
+                                            std::uint32_t& rng,
+                                            float recallPosition,
+                                            float randomAmount,
+                                            float hopSeconds) noexcept;
+
+/**
+    STFT + per-channel spectral history + Shadow mode.
+
+    Audio-thread only for history mutation. UI reads VisualizationAtomics.
+    History is read BEFORE committing the current analysis frame.
 */
 class SpectralEngine
 {
@@ -23,23 +42,76 @@ public:
     void reset();
     void releaseResources();
 
-    /** Phase 2+: run STFT + history + mode processing into buffer. */
-    void process (juce::AudioBuffer<float>& buffer, const ModeParams& params, SpectralMode mode);
+    /** Set spectral parameter targets (from APVTS). Advanced per FFT hop. */
+    void setSpectralParameterTargets (float influence,
+                                      float recall,
+                                      float forget,
+                                      float blur,
+                                      float transientPreserve,
+                                      float randomRecall,
+                                      bool freeze) noexcept;
 
-    void setFrozen (bool shouldFreeze) noexcept { history_.setFrozen (shouldFreeze); }
-    void clearHistory() { history_.clear(); }
+    void setMode (SpectralMode mode) noexcept;
+    void setActiveMemoryLengthSeconds (float seconds) noexcept;
+
+    /** Message-thread safe: request a clear; consumed on the audio thread. */
+    void requestClearHistory() noexcept { clearHistoryRequested_.store (true, std::memory_order_release); }
+
+    void process (juce::AudioBuffer<float>& buffer) noexcept;
 
     [[nodiscard]] int getLatencySamples() const noexcept { return stft_.getLatencySamples(); }
-    [[nodiscard]] SpectralHistoryBuffer& getHistory() noexcept { return history_; }
-    [[nodiscard]] const SpectralHistoryBuffer& getHistory() const noexcept { return history_; }
+    [[nodiscard]] int getHopSize() const noexcept { return stft_.getHopSize(); }
+    [[nodiscard]] STFTProcessor& getSTFT() noexcept { return stft_; }
+    [[nodiscard]] const STFTProcessor& getSTFT() const noexcept { return stft_; }
+    [[nodiscard]] SpectralModeProcessor& getModeProcessor() noexcept { return modes_; }
+    [[nodiscard]] const SpectralModeProcessor& getModeProcessor() const noexcept { return modes_; }
+
+    [[nodiscard]] VisualizationAtomics& getVisualization() noexcept { return viz_; }
+    [[nodiscard]] const VisualizationAtomics& getVisualization() const noexcept { return viz_; }
+    [[nodiscard]] SnapshotPublisher& getSnapshotPublisher() noexcept { return snapshots_; }
+    [[nodiscard]] const SnapshotPublisher& getSnapshotPublisher() const noexcept { return snapshots_; }
+
+    /** Audio-thread only. */
+    [[nodiscard]] SpectralHistoryBuffer& getHistory (int channel = 0) noexcept;
+    [[nodiscard]] const SpectralHistoryBuffer& getHistory (int channel = 0) const noexcept;
 
 private:
-    STFTProcessor stft_;
-    SpectralHistoryBuffer history_;
-    SpectralModeProcessor modes_;
-    DryWetMixer dryWet_; // used once latency-compensated dry path exists
+    static void spectrumCallback (void* userData,
+                                  float* interleavedFftData,
+                                  int fftSize,
+                                  int channelIndex) noexcept;
 
+    void onSpectrum (float* interleavedFftData, int fftSize, int channelIndex) noexcept;
+    void clearHistoryOnAudioThread() noexcept;
+    void publishVisualization (int channelIndex) noexcept;
+
+    STFTProcessor stft_;
+    std::vector<std::unique_ptr<SpectralHistoryBuffer>> histories_;
+    SpectralModeProcessor modes_;
+    ParameterSmoother frameSmoothers_;
+
+    SpectralFrame workingFrame_;
+    SpectralFrame analysisForHistory_; // unmodified analysis pushed to history
+    std::vector<float> historyMagsScratch_;
+    std::vector<std::vector<float>> previousMagnitudes_;
+    std::vector<bool> hasPreviousFrame_;
+    std::vector<std::uint64_t> frameCounters_;
+
+    VisualizationAtomics viz_;
+    SnapshotPublisher snapshots_;
+    std::atomic<bool> clearHistoryRequested_ { false };
+    ModeParams hopParams_ {};
+    SpectralMode currentMode_ = SpectralMode::Shadow;
+    float memoryLengthSeconds_ = constants::memoryLengthDefaultSec;
+    std::uint32_t vizSequence_ = 0;
+
+    // Random Recall wander (audio-thread state; no alloc)
+    float wanderOffset_ = 0.0f;   // smoothed bipolar noise in [-1, 1]
+    std::uint32_t wanderRng_ = 0xA5F1C3E9u;
+
+    bool freezeTarget_ = false;
     double sampleRate_ = 44100.0;
+    int numChannels_ = 2;
     bool prepared_ = false;
 };
 

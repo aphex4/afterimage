@@ -9,7 +9,7 @@ namespace afterimage
 namespace constants
 {
     // -------------------------------------------------------------------------
-    // STFT defaults (Phase 2+) — not yet active in Phase 1 pass-through.
+    // STFT configuration (Phase 2+)
     // -------------------------------------------------------------------------
     constexpr int    fftOrder           = 11;          // 2^11 = 2048
     constexpr int    fftSize            = 1 << fftOrder;
@@ -42,14 +42,20 @@ namespace constants
     constexpr float  modeCrossfadeSec   = 0.08f;
     constexpr float  bypassSmoothSec    = 0.02f;
 
+    // Random Recall: slow LPF wander around Recall Position (not per-hop chaos)
+    constexpr float  randomRecallMaxDepth  = 0.35f;  // max |age| offset at Random = 100%
+    constexpr float  randomRecallCutoffHz  = 0.28f;  // wander bandwidth
+
     // -------------------------------------------------------------------------
     // UI
     // -------------------------------------------------------------------------
-    constexpr int    editorDefaultWidth  = 900;
-    constexpr int    editorDefaultHeight = 600;
-    constexpr int    editorMinWidth      = 720;
-    constexpr int    editorMinHeight     = 480;
-    constexpr int    uiTimerHz           = 30;
+    constexpr int    editorDefaultWidth  = 1000;
+    constexpr int    editorDefaultHeight = 720;
+    constexpr int    editorMinWidth      = 800;
+    constexpr int    editorMinHeight     = 560;
+    constexpr int    uiTimerHz           = 60;
+    constexpr int    maxInternalBlockSize = 2048; // chunk size for oversized host callbacks
+
 
     // -------------------------------------------------------------------------
     // Parameter IDs (stable — do not rename)
