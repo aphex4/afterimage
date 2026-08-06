@@ -289,7 +289,7 @@ void SpectralEngine::onSpectrum (float* interleavedFftData, int fftSize, int cha
 
     hasPreviousFrame_[static_cast<std::size_t> (channelIndex)] = true;
     const float raw = (denom > 1.0e-9) ? static_cast<float> (flux / denom) : 0.0f;
-    workingFrame_.transientStrength = juce::jlimit (0.0f, 1.0f, raw * 4.0f);
+    workingFrame_.transientStrength = juce::jlimit (0.0f, 1.0f, raw * kTransientFluxCalibration);
 
     // Keep unmodified analysis for history (Shadow must not pollute the memory well).
     analysisForHistory_.copyFrom (workingFrame_);

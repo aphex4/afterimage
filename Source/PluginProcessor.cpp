@@ -37,6 +37,14 @@ AfterimageAudioProcessor::AfterimageAudioProcessor()
     pOutputGain = bind (idOutputGain);
     pMix = bind (idMix);
     pBypass = bind (idBypass);
+
+#if defined (AFTERIMAGE_ENABLE_LICENSING)
+    licenseManager_.initialise();
+    entitlementDryAmount_.reset (44100.0, 0.05);
+    entitlementDryAmount_.setCurrentAndTargetValue (
+        licenseManager_.getEntitlement()
+            == afterimage::licensing::EntitlementState::DryPassThrough ? 1.0f : 0.0f);
+#endif
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout AfterimageAudioProcessor::createParameterLayout()
@@ -50,25 +58,27 @@ juce::AudioProcessorValueTreeState::ParameterLayout AfterimageAudioProcessor::cr
         juce::NormalisableRange<float> (memoryLengthMinSec, memoryLengthMaxSec, 0.01f, 0.45f),
         memoryLengthDefaultSec,
         juce::AudioParameterFloatAttributes().withStringFromValueFunction (secondsText)));
+    // Defaults: demonstrative but musical (saved sessions keep their values).
+    // Was: Recall 45%, Influence 50%, Forget 35%, Blur 15%, Transient 50%.
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { idRecallPosition, 1 }, "Recall Position",
-        juce::NormalisableRange<float> (0.0f, 1.0f, 0.001f), 0.45f,
+        juce::NormalisableRange<float> (0.0f, 1.0f, 0.001f), 0.40f,
         juce::AudioParameterFloatAttributes().withStringFromValueFunction (percentText)));
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { idInfluence, 1 }, "Influence",
-        juce::NormalisableRange<float> (0.0f, 1.0f, 0.001f), 0.50f,
+        juce::NormalisableRange<float> (0.0f, 1.0f, 0.001f), 0.40f,
         juce::AudioParameterFloatAttributes().withStringFromValueFunction (percentText)));
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { idForget, 1 }, "Forget",
-        juce::NormalisableRange<float> (0.0f, 1.0f, 0.001f), 0.35f,
+        juce::NormalisableRange<float> (0.0f, 1.0f, 0.001f), 0.25f,
         juce::AudioParameterFloatAttributes().withStringFromValueFunction (percentText)));
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { idBlur, 1 }, "Blur",
-        juce::NormalisableRange<float> (0.0f, 1.0f, 0.001f), 0.15f,
+        juce::NormalisableRange<float> (0.0f, 1.0f, 0.001f), 0.12f,
         juce::AudioParameterFloatAttributes().withStringFromValueFunction (percentText)));
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { idTransientPreserve, 1 }, "Transient Preserve",
-        juce::NormalisableRange<float> (0.0f, 1.0f, 0.001f), 0.50f,
+        juce::NormalisableRange<float> (0.0f, 1.0f, 0.001f), 0.35f,
         juce::AudioParameterFloatAttributes().withStringFromValueFunction (percentText)));
     params.push_back (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { idFreeze, 1 }, "Freeze", false));
@@ -112,6 +122,13 @@ void AfterimageAudioProcessor::prepareToPlay (double sampleRate, int samplesPerB
     smoothers.mix.setCurrentAndTargetValue (smoothers.mix.getTargetValue());
     smoothers.outputGain.setCurrentAndTargetValue (smoothers.outputGain.getTargetValue());
     smoothers.bypassAmount.setCurrentAndTargetValue (smoothers.bypassAmount.getTargetValue());
+
+#if defined (AFTERIMAGE_ENABLE_LICENSING)
+    entitlementDryAmount_.reset (sampleRate, 0.05);
+    entitlementDryAmount_.setCurrentAndTargetValue (
+        licenseManager_.getEntitlement()
+            == afterimage::licensing::EntitlementState::DryPassThrough ? 1.0f : 0.0f);
+#endif
 
     engine.requestClearHistory(); // consumed on first processBlock
     dryWetMixer.reset();
@@ -168,18 +185,30 @@ void AfterimageAudioProcessor::processChunk (juce::AudioBuffer<float>& wetChunk,
     constexpr float rise = 0.6f, fall = 0.92f;
     viz.storeInputPeak (inPeak > prevIn ? prevIn + (inPeak - prevIn) * rise : prevIn * fall);
 
+#if defined (AFTERIMAGE_ENABLE_LICENSING)
+    // Audio thread: only read cached entitlement — never license IO / crypto.
+    const bool dryOnly = licenseManager_.getEntitlement()
+                         == afterimage::licensing::EntitlementState::DryPassThrough;
+    entitlementDryAmount_.setTargetValue (dryOnly ? 1.0f : 0.0f);
+#endif
+
     // Wet: identity STFT + history capture
     engine.process (wetChunk);
 
     // Latency-aligned dry
     dryWetMixer.processDryDelay (dryInChunk, delayedDryChunk);
 
-    // Mix → bypass → output gain (final trim after bypass)
+    // Mix → bypass → entitlement dry → output gain (final trim after bypass)
     for (int i = 0; i < numSamples; ++i)
     {
         const float mix = smoothers.mix.getNextValue();
         const float bypass = smoothers.bypassAmount.getNextValue();
         const float gain = smoothers.outputGain.getNextValue();
+#if defined (AFTERIMAGE_ENABLE_LICENSING)
+        const float entitlementDry = entitlementDryAmount_.getNextValue();
+#else
+        const float entitlementDry = 0.0f;
+#endif
 
         const float dryGain = std::cos (mix * juce::MathConstants<float>::halfPi);
         const float wetGain = std::sin (mix * juce::MathConstants<float>::halfPi);
@@ -190,6 +219,7 @@ void AfterimageAudioProcessor::processChunk (juce::AudioBuffer<float>& wetChunk,
             const float wet = wetChunk.getSample (ch, i);
             float mixed = dry * dryGain + wet * wetGain;
             mixed = mixed * (1.0f - bypass) + dry * bypass;
+            mixed = mixed * (1.0f - entitlementDry) + dry * entitlementDry;
             mixed *= gain;
             wetChunk.setSample (ch, i, mixed);
         }

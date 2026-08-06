@@ -7,6 +7,8 @@
 #include "DSP/STFTProcessor.h"
 #include "DSP/SpectralFrame.h"
 #include "Utilities/Constants.h"
+#include "EffectStrengthMeasure.h"
+#include "EffectStrengthMeasure.h"
 
 #include <cmath>
 #include <iostream>
@@ -14,7 +16,10 @@
 
 using namespace afterimage;
 
-static int gFailures = 0;
+int gFailures = 0;
+
+void runEffectStrengthTests();
+void runLicensingTests();
 
 #define CHECK(cond) \
     do { \
@@ -932,6 +937,11 @@ int main()
     testEngineInfluenceZeroAndFreeze();
     testEngineShadowAudibleVsIdentity();
     testStereoIsolation();
+    runEffectStrengthTests();
+    runLicensingTests();
+
+    afterimage::measure::runEffectStrengthMeasurements (
+        afterimage::measure::envWantsMeasurements());
 
     if (gFailures == 0)
     {

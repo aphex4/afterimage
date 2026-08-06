@@ -28,24 +28,36 @@ struct Preset
     float mix;
 };
 
+/**
+    Factory bank after audible retune.
+
+    Categories (subtle / medium / extreme) — every preset is intentional.
+    Default host program (index 0 / Soft Shadow) is immediately demonstrative
+    with Influence ~40% and Mix 100%. Parameter IDs unchanged; saved sessions
+    keep their stored values. APVTS defaults updated to match Soft Shadow
+    starting direction (documented in HANDOFF).
+*/
 inline constexpr Preset kPresets[] = {
-    // Shadow starting points
-    { "Soft Shadow",       0, 3.0f, 0.40f, 0.45f, 0.30f, 0.20f, 0.55f, false, 0.00f, 0.0f, 1.0f },
-    { "Deep Ghost",        0, 5.0f, 0.65f, 0.72f, 0.20f, 0.25f, 0.40f, false, 0.00f, 0.0f, 1.0f },
-    { "Halo Pad",          0, 4.0f, 0.35f, 0.55f, 0.45f, 0.55f, 0.70f, false, 0.15f, 0.0f, 0.85f },
+    // --- Subtle ---
+    // Demonstrative default: clear ghost on chord changes within a few seconds.
+    { "Soft Shadow",       0, 3.0f, 0.40f, 0.40f, 0.25f, 0.12f, 0.35f, false, 0.00f, 0.0f, 1.0f },
+    { "Gentle Morph",      2, 3.0f, 0.40f, 0.38f, 0.22f, 0.18f, 0.40f, false, 0.00f, 0.0f, 1.0f },
+    { "Light Carve",       1, 2.5f, 0.32f, 0.42f, 0.28f, 0.12f, 0.45f, false, 0.00f, 0.0f, 1.0f },
 
-    // Erase starting points
-    { "Erase Carve",       1, 2.5f, 0.30f, 0.70f, 0.25f, 0.10f, 0.60f, false, 0.00f, 0.0f, 1.0f },
-    { "Whisper Erase",     1, 3.5f, 0.50f, 0.40f, 0.50f, 0.35f, 0.45f, false, 0.10f, 0.0f, 0.90f },
+    // --- Medium ---
+    { "Deep Ghost",        0, 5.0f, 0.58f, 0.55f, 0.22f, 0.22f, 0.35f, false, 0.00f, 0.0f, 1.0f },
+    { "Memory Transfer",   2, 4.0f, 0.50f, 0.52f, 0.28f, 0.20f, 0.40f, false, 0.05f, 0.0f, 1.0f },
+    { "Repetition Eater",  1, 3.0f, 0.35f, 0.58f, 0.30f, 0.10f, 0.50f, false, 0.00f, 0.0f, 1.0f },
 
-    // Merge starting points
-    { "Merge Morph",       2, 3.0f, 0.45f, 0.60f, 0.30f, 0.20f, 0.50f, false, 0.00f, 0.0f, 1.0f },
-    { "Slow Dissolve",     2, 6.0f, 0.70f, 0.80f, 0.55f, 0.40f, 0.35f, false, 0.00f, -1.0f, 1.0f },
+    // --- Extreme ---
+    { "Frozen Afterimage", 0, 4.5f, 0.55f, 0.68f, 0.12f, 0.28f, 0.25f, true,  0.00f, 0.0f, 1.0f },
+    { "Spectral Hollow",   1, 3.5f, 0.45f, 0.72f, 0.35f, 0.20f, 0.40f, false, 0.00f, -0.5f, 1.0f },
+    { "Past Life",         2, 6.0f, 0.70f, 0.75f, 0.40f, 0.35f, 0.30f, false, 0.15f, -1.0f, 1.0f },
 
-    // Creative variants
-    { "Frozen Afterimage", 0, 4.0f, 0.55f, 0.65f, 0.15f, 0.30f, 0.30f, true,  0.00f, 0.0f, 1.0f },
-    { "Drift Memory",      0, 3.5f, 0.45f, 0.58f, 0.35f, 0.25f, 0.50f, false, 0.70f, 0.0f, 1.0f },
-    { "Transient Shadow",  0, 2.0f, 0.25f, 0.50f, 0.20f, 0.05f, 0.90f, false, 0.00f, 0.0f, 1.0f },
+    // --- Creative extras ---
+    { "Drift Memory",      0, 3.5f, 0.45f, 0.50f, 0.30f, 0.22f, 0.40f, false, 0.65f, 0.0f, 1.0f },
+    { "Halo Pad",          0, 4.0f, 0.35f, 0.48f, 0.40f, 0.50f, 0.55f, false, 0.12f, 0.0f, 0.90f },
+    { "Transient Shadow",  0, 2.0f, 0.28f, 0.45f, 0.18f, 0.05f, 0.85f, false, 0.00f, 0.0f, 1.0f },
 };
 
 inline constexpr int kNumPresets = static_cast<int> (sizeof (kPresets) / sizeof (kPresets[0]));

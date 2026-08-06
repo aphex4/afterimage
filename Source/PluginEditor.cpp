@@ -15,13 +15,13 @@ const AfterimageAudioProcessorEditor::DockItem* dockItems()
           "FORGET\nHow quickly older recalled frames lose weight.",
           AfterimageAudioProcessorEditor::DockGroup::Memory },
         { "INFLUENCE", afterimage::constants::idInfluence,
-          "INFLUENCE\nHow strongly recalled memory affects the current spectrum. 0% is transparent.",
+          "INFLUENCE\nHow strongly recalled memory affects the current spectrum. Mid settings are intentionally audible. 0% is transparent.",
           AfterimageAudioProcessorEditor::DockGroup::Spectral },
         { "BLUR", afterimage::constants::idBlur,
-          "BLUR\nSmooths history magnitudes across neighboring frequency bins.",
+          "BLUR\nSmooths history magnitudes across neighboring frequency bins (energy preserved).",
           AfterimageAudioProcessorEditor::DockGroup::Spectral },
         { "TRANSIENT", afterimage::constants::idTransientPreserve,
-          "TRANSIENT\nPreserves attacks by reducing influence when transients are detected.",
+          "TRANSIENT\nPreserves attacks by reducing influence on detected transients (never fully shuts the effect off).",
           AfterimageAudioProcessorEditor::DockGroup::Spectral },
         { "RANDOM", afterimage::constants::idRandomRecall,
           "RANDOM\nSlow smoothed wander around Recall Position.",
@@ -58,6 +58,11 @@ AfterimageAudioProcessorEditor::AfterimageAudioProcessorEditor (AfterimageAudioP
     titleLabel.setJustificationType (juce::Justification::centredLeft);
     titleLabel.setInterceptsMouseClicks (false, false);
     addAndMakeVisible (titleLabel);
+
+#if defined (AFTERIMAGE_ENABLE_LICENSING)
+    licensePanel = std::make_unique<LicensePanel> (audioProcessor.getLicenseManager());
+    addAndMakeVisible (*licensePanel);
+#endif
 
     memoryStatusLabel.setText ("MEMORY 0%", juce::dontSendNotification);
     memoryStatusLabel.setFont (AfterimageFonts::get (AfterimageFontRole::Status));
@@ -220,10 +225,19 @@ void AfterimageAudioProcessorEditor::resized()
 
     auto area = getLocalBounds().reduced (margin);
 
-    // Header: wordmark | preset | modes | status | meters | bypass
+    // Header: wordmark | license | preset | modes | status | meters | bypass
     auto top = area.removeFromTop (headerH);
-    const int titleW = juce::jlimit (140, 240, W / 5);
+    const int titleW = juce::jlimit (140, 220, W / 5);
     titleLabel.setBounds (top.removeFromLeft (titleW).reduced (0, juce::roundToInt (6.0f * scale)));
+
+#if defined (AFTERIMAGE_ENABLE_LICENSING)
+    if (licensePanel != nullptr)
+    {
+        top.removeFromLeft (8);
+        const int chipW = juce::jlimit (140, 220, juce::roundToInt (180.0f * scale));
+        licensePanel->setBounds (top.removeFromLeft (chipW).reduced (0, juce::roundToInt (12.0f * scale)));
+    }
+#endif
 
     const int bypassW = juce::jmax (52, juce::roundToInt (58.0f * scale));
     bypassButton.setBounds (top.removeFromRight (bypassW).reduced (2, juce::roundToInt (6.0f * scale)));
@@ -235,7 +249,7 @@ void AfterimageAudioProcessorEditor::resized()
                                       .reduced (0, juce::roundToInt (14.0f * scale)));
     top.removeFromRight (8);
 
-    const int modeW = juce::jlimit (200, 300, top.getWidth() - 150);
+    const int modeW = juce::jlimit (180, 280, top.getWidth() - 150);
     modeSelector.setBounds (top.removeFromRight (modeW).reduced (0, juce::roundToInt (10.0f * scale)));
     top.removeFromRight (8);
     presetBox.setBounds (top.removeFromRight (juce::jmin (top.getWidth(), juce::roundToInt (150.0f * scale)))
@@ -316,6 +330,17 @@ void AfterimageAudioProcessorEditor::timerCallback()
     const int wantId = audioProcessor.getCurrentProgram() + 1;
     if (presetBox.getSelectedId() != wantId)
         presetBox.setSelectedId (wantId, juce::dontSendNotification);
+
+#if defined (AFTERIMAGE_ENABLE_LICENSING)
+    if (licensePanel != nullptr)
+    {
+        if (++licenseRefreshCounter_ >= 60)
+        {
+            licenseRefreshCounter_ = 0;
+            licensePanel->refreshStatus();
+        }
+    }
+#endif
 
     const auto* specs = dockItems();
     for (size_t i = 0; i < knobs.size() && i < (size_t) kDockCount; ++i)

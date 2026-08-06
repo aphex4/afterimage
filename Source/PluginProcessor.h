@@ -10,6 +10,10 @@
 #include "Utilities/Constants.h"
 #include "Utilities/FactoryPresets.h"
 
+#if defined (AFTERIMAGE_ENABLE_LICENSING)
+#include "Licensing/LicenseManager.h"
+#endif
+
 #include <atomic>
 #include <vector>
 
@@ -67,6 +71,10 @@ public:
     float getOutputLevel() const noexcept { return engine.getVisualization().loadOutputPeak(); }
     float getHistoryFill() const noexcept { return engine.getVisualization().loadHistoryFill(); }
 
+#if defined (AFTERIMAGE_ENABLE_LICENSING)
+    afterimage::licensing::LicenseManager& getLicenseManager() noexcept { return licenseManager_; }
+#endif
+
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
 private:
@@ -103,6 +111,11 @@ private:
     std::atomic<float>* pBypass = nullptr;
 
     int currentProgram_ = 0;
+
+#if defined (AFTERIMAGE_ENABLE_LICENSING)
+    afterimage::licensing::LicenseManager licenseManager_;
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> entitlementDryAmount_;
+#endif
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AfterimageAudioProcessor)
 };

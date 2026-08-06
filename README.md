@@ -4,8 +4,8 @@
 
 AFTERIMAGE is a real-time spectral memory processor. It continuously analyzes and stores a short history of the signal’s spectral content so the present can interact with its own recent past — producing evolving spectral echoes, ghost harmonics, frequency suppression, and morphing textures.
 
-> **Current milestone: Phase 8 polish — first solid release**  
-> Shadow / Erase / Merge, Random Recall wander, factory presets, Memory Well, and validation tests.
+> **Current milestone: Audible retune + offline licensing**  
+> Shadow / Erase / Merge with perceptual Influence mapping, factory presets (subtle/medium/extreme), Memory Well, Ed25519 license activation, and validation tests.
 
 ---
 
@@ -13,12 +13,13 @@ AFTERIMAGE is a real-time spectral memory processor. It continuously analyzes an
 
 - Overlap-add STFT with host latency + latency-compensated dry/wet
 - Per-channel spectral history with Freeze and Memory Length
-- **Shadow** — additive spectral ghost of recalled memory
-- **Erase** — carve holes where memory overlaps the present
-- **Merge** — morph the present toward recalled memory
+- **Shadow** — additive spectral ghost (controlled loudness rise, not forced energy match)
+- **Erase** — sensitive overlap carve where memory meets the present
+- **Merge** — log-magnitude morph toward recalled memory
 - **Random Recall** — slow smoothed wander around Recall Position
-- Factory presets (parameter values only; history cleared on load)
-- Shared controls: Recall (ring), Forget, Blur (history only), Transient Preserve, Influence, Mix, Output
+- Factory presets in subtle / medium / extreme categories
+- Shared controls: Recall (ring), Forget (retention floor), Blur (history only), Transient Preserve, Influence (perceptual curve), Mix, Output
+- Offline licensing: 14-day trial, signed `.afterimage-license`, compact activation UI
 - ~80 ms click-free crossfade when switching modes
 - Memory Well particle visualization (DSP-seeded)
 
@@ -77,7 +78,24 @@ cmake --build build --config Release -j
 
 # Validation tests
 ctest --test-dir build --output-on-failure
+
+# Optional: print effect-strength diagnostics
+AFTERIMAGE_PRINT_MEASUREMENTS=1 ./build/AFTERIMAGE_Tests
+
+# Developer license tool (not linked into the plugin)
+cmake -B build -S . -DAFTERIMAGE_BUILD_LICENSE_TOOL=ON -DJUCE_PATH=$HOME/dev/Spawnclone/JUCE
+cmake --build build --target AfterimageLicenseTool -j
 ```
+
+Licensing details: [`docs/LICENSING.md`](docs/LICENSING.md).
+
+### CMake options
+
+| Flag | Default | Purpose |
+|------|---------|---------|
+| `AFTERIMAGE_ENABLE_LICENSING` | ON | Offline signed-license system |
+| `AFTERIMAGE_BUILD_LICENSE_TOOL` | OFF | Build `AfterimageLicenseTool` |
+| `AFTERIMAGE_USE_TEST_LICENSE_KEY` | OFF | Embed test public key (tests only; never ship) |
 
 ### Debug build
 
@@ -117,6 +135,25 @@ build/AFTERIMAGE_artefacts/Release/VST3/AFTERIMAGE.vst3
 
 ---
 
+## Licensing
+
+Commercial builds include an offline signed-license system (Ed25519 via Monocypher).
+
+- 14-day trial with full DSP; after expiry → latency-compensated dry pass-through
+- Import `.afterimage-license` or paste from the header license chip
+- See [Docs/LICENSING.md](Docs/LICENSING.md) for architecture, tool usage, and security limitations
+- Effect formula notes: [Docs/EFFECT_ENGINE.md](Docs/EFFECT_ENGINE.md)
+
+```bash
+# Optional license tool (not in the plugin binary)
+cmake -B build -S . -DAFTERIMAGE_BUILD_LICENSE_TOOL=ON -DJUCE_PATH=$HOME/dev/Spawnclone/JUCE
+cmake --build build --target AfterimageLicenseTool -j
+```
+
+CMake options: `AFTERIMAGE_ENABLE_LICENSING` (default ON), `AFTERIMAGE_BUILD_LICENSE_TOOL` (OFF), `AFTERIMAGE_USE_TEST_LICENSE_KEY` (OFF — do not ship Release with this ON).
+
+---
+
 ## Controls
 
 | Control | Range | Notes |
@@ -124,15 +161,16 @@ build/AFTERIMAGE_artefacts/Release/VST3/AFTERIMAGE.vst3
 | Mode | Shadow / Erase / Merge | All three transform magnitudes |
 | Memory | 0.1–10 s | Searchable history window |
 | Recall | 0–100% | Position in history (0 = newest); scrub via Memory Well ring |
-| Influence | 0–100% | Strength of spectral interaction |
-| Forget | 0–100% | How quickly older frames lose weight |
-| Blur | 0–100% | Inter-bin smoothing of **history** magnitudes |
-| Transients | 0–100% | Attack preservation |
+| Influence | 0–100% | Perceptual curve (exact 0/1); mid range more useful |
+| Forget | 0–100% | Age weighting with mode-specific retention floor |
+| Blur | 0–100% | Inter-bin smoothing of **history** magnitudes (RMS preserved) |
+| Transients | 0–100% | Attack preservation (max ~65% influence reduction) |
 | Random | 0–100% | Slow smoothed wander around Recall Position |
 | Freeze | on/off | Stop writing new history frames |
 | Mix | 0–100% | Equal-power dry/wet |
 | Output | −24…+12 dB | Output gain |
 | Bypass | on/off | Smoothed host-friendly bypass |
+| License | header chip | Trial / licensed / invalid — click to activate |
 | Preset | factory list | Applies parameter values only; clears live history |
 
 ---
@@ -151,22 +189,23 @@ build/AFTERIMAGE_artefacts/Release/VST3/AFTERIMAGE.vst3
 
 - **Stereo Link** deferred — L/R keep independent spectral histories
 - Session/preset state stores parameters only (never live spectral history)
+- Offline licensing is commercial deterrence, not unbreakable DRM (see `docs/LICENSING.md`)
+- Musical calibration of Influence curves should be confirmed by DAW audition
 
 ---
 
 ## Development roadmap
 
-1. **Phase 1** — Project foundation ✅
-2. **Phase 2** — STFT engine ✅
-3. **Phase 3** — Spectral history buffer integration ✅
-4. **Phase 4** — Shadow mode ✅
-5. **Phase 5** — Erase + Merge + mode crossfade ✅
-6. **Phase 6** — Random Recall ✅
-7. **Phase 7** — Memory Well ✅
-8. **Phase 8** — Factory presets + polish ✅ (Stereo Link deferred)
+1. **Phase 1–8** — Foundation through factory presets + polish ✅ (Stereo Link deferred)
+2. **Audible retune** — perceptual Influence, retention floors, mode formulas ✅
+3. **Licensing** — offline Ed25519 licenses + trial + activation UI ✅
+4. **Next** — install production public key; optional online activation; Stereo Link
 
 ---
 
 ## License
 
-Plugin code: project-local. JUCE is subject to the [JUCE license](https://juce.com/legal/juce-8-licence/).
+Plugin code: project-local commercial product with offline activation (see Docs/LICENSING.md).  
+Vendored Monocypher: BSD-2-Clause OR CC0-1.0.  
+JUCE is subject to the [JUCE license](https://juce.com/legal/juce-8-licence/).
+Monocypher (Ed25519): BSD-2-Clause OR CC0-1.0.

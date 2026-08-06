@@ -18,3 +18,7 @@ xcuserdata/
 # Misc
 *.user
 compile_commands.json
+
+# Local test scratch
+/Tests/_license_storage_tmp/
+/build-debug/

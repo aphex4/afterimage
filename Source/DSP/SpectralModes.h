@@ -15,6 +15,14 @@ enum class SpectralMode
     Merge
 };
 
+/** Compile-time / developer audition path — not exposed in release UI. */
+enum class DebugAudition
+{
+    Normal = 0,
+    RecalledOnly,
+    SpectralDelta
+};
+
 struct ModeParams
 {
     float influence = 0.5f;
@@ -47,6 +55,29 @@ struct ModeParams
 [[nodiscard]] float forgetToDecayCoefficient (float forget01) noexcept;
 
 [[nodiscard]] float ageWeightFromForget (float ageNormalized01, float forget01) noexcept;
+
+/** Mode-specific retention floor so Forget does not erase moderate Influence. */
+[[nodiscard]] float retentionFloorForMode (SpectralMode mode) noexcept;
+
+/**
+    Remapped age weight with retention floor:
+      historyWeight = floor + (1 - floor) * ageWeightFromForget(...)
+*/
+[[nodiscard]] float remappedHistoryWeight (SpectralMode mode,
+                                           float ageNormalized01,
+                                           float forget01) noexcept;
+
+/**
+    Perceptual Influence curve: exactly 0 at 0, exactly 1 at 1, stronger mid.
+    mapped = 1 - (1 - x)^exponent  (mode-specific exponent).
+*/
+[[nodiscard]] float mapInfluenceForMode (SpectralMode mode, float influence01) noexcept;
+
+/** Caps how much Transient Preserve can shut off historical contribution. */
+inline constexpr float kMaxTransientReduction = 0.65f;
+
+/** Spectral-flux → transientStrength calibration (was 4.0). */
+inline constexpr float kTransientFluxCalibration = 3.2f;
 
 /** Nonlinear blur radius: round(blur² * maxRadius). blur=0 → 0 (exact identity). */
 [[nodiscard]] int blurRadiusFromAmount (float blur01,
@@ -90,6 +121,13 @@ void writeInterleavedFromMagnitudePhase (float* interleavedFftData,
 
     Phase 5: all three modes modify magnitudes. A short any-mode crossfade
     (constants::modeCrossfadeSec) dual-applies previous→target so switches stay click-free.
+
+    Retune (audible moderate settings):
+      - perceptual Influence mapping
+      - retention-floor Forget remapping
+      - recalled-spectrum energy normalisation (bounded, smoothed)
+      - mode-specific energy policies
+      - Transient Preserve max reduction 0.65
 */
 class SpectralModeProcessor
 {
@@ -105,6 +143,9 @@ public:
     [[nodiscard]] SpectralMode getLastMode() const noexcept { return lastMode_; }
     /** 0 = fully previous mode, 1 = fully target mode. */
     [[nodiscard]] float getModeAmount() const noexcept { return modeCrossfade_; }
+
+    /** Last smoothed energy scale applied (diagnostic / tests). */
+    [[nodiscard]] float getLastEnergyScale (int channelIndex = 0) const noexcept;
 
     /**
         Apply the active spectral mode into `frame.magnitudes` in-place.
@@ -150,17 +191,31 @@ private:
                                                       int numBins,
                                                       float blur01) noexcept;
 
-    /** Update transient smoother; returns effectiveInfluence * historyWeight. */
-    [[nodiscard]] float computeMixAmount (const ModeParams& params,
+    /**
+        Update transient smoother; returns effective mappedInfluence * historyWeight
+        after retention floor and max transient reduction.
+    */
+    [[nodiscard]] float computeMixAmount (SpectralMode mode,
+                                          const ModeParams& params,
                                           int channelIndex,
                                           bool updateSmoothers) noexcept;
 
-    void applyEnergyCompensation (float* magnitudes,
-                                  int numBins,
-                                  double energyIn,
-                                  double energyOut,
-                                  int channelIndex,
-                                  bool updateSmoothers) noexcept;
+    /** Bounded, smoothed makeup so quiet history still shapes the mode. */
+    [[nodiscard]] const float* normalizeHistoryEnergy (SpectralMode mode,
+                                                       const float* historyMagnitudes,
+                                                       const float* currentMagnitudes,
+                                                       int numBins,
+                                                       int channelIndex,
+                                                       bool updateSmoothers) noexcept;
+
+    void applyEnergyPolicy (SpectralMode mode,
+                            float* magnitudes,
+                            int numBins,
+                            double energyIn,
+                            double energyOut,
+                            float mappedInfluence,
+                            int channelIndex,
+                            bool updateSmoothers) noexcept;
 
     void sanitizeMagnitudes (float* magnitudes, int numBins) noexcept;
 
@@ -185,8 +240,10 @@ private:
     std::vector<float> prefixScratch_;
     std::vector<float> identityScratch_;
     std::vector<float> crossfadeScratch_;
+    std::vector<float> histNormScratch_;
 
     std::vector<float> energyScaleSmoothed_;
+    std::vector<float> histMakeupSmoothed_;
     std::vector<float> transientSmoothed_;
 };
 

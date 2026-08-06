@@ -30,7 +30,7 @@ Modes: **Shadow**, **Erase**, **Merge** — all implemented and audible. Random 
 | 7 Memory Well viz | ✅ | DSP-seeded circular particles + Recall ring |
 | 8 Presets / polish | ✅ | ≥8 factory presets, tooltips; Stereo Link deferred |
 
-Current milestone line in README: **Phase 8 polish — first solid release**.
+Current milestone line in README: **Audible retune + offline licensing**.
 
 ---
 
@@ -80,37 +80,33 @@ struct SpectralFrame {
 - **Freeze**: stop writes; keep processing; dry input not frozen  
 - State save/restore: **parameters only — never serialize live history**; clear on load  
 
-### Shadow formula (implemented)
+### Shadow / Erase / Merge (audible retune)
 
-```text
-effectiveInfluence = influence * (1 - transientStrength * transientPreserve)
-decayWeight        = exp(-recallAge01 * decayCoeff(forget))   // forget↑ → faster fade
-outMag             = currentMag * (1 - effectiveInfluence)
-                   + historyMag * (effectiveInfluence * decayWeight)
+**Influence mapping** (`mapInfluenceForMode`):
+```
+mapped = 1 - (1 - x)^exponent   // exact 0 at 0, exact 1 at 1
+Shadow exp≈1.70, Erase≈2.05, Merge≈1.45
 ```
 
-Then ±6 dB energy match vs pre-Shadow magnitude energy. Current **phase kept**.
-
-### Random Recall (implemented)
-
-Slow one-pole LPF on bipolar noise (~0.28 Hz), scaled by `randomRecall * maxDepth` (±0.35 age at 100%). Applied once per hop on channel 0; shared L/R `recallAge01`. Random = 0 → exact Recall Position.
-
-Erase / Merge: implemented (see §3b).
-
-### Erase / Merge (Phase 5)
-
-**Erase:**
+**Forget retention floor** (`remappedHistoryWeight`):
 ```
-overlap = hist / (hist + cur + eps)
-out = cur * (1 - min(influence * forgetWeight * overlap, 0.92))
+historyWeight = floor + (1 - floor) * ageWeightFromForget(...)
+Shadow floor=0.20, Erase=0.15, Merge=0.25
 ```
 
-**Merge:**
-```
-out = lerp(cur, hist, influence * forgetWeight)
-```
+**Transient Preserve**: max reduction 0.65 (not full shut-off). Flux calibration `*3.2` (was `*4.0`).
 
-**Mode switch:** ~80 ms dual-pass crossfade between previous and target mode outputs.
+**Shadow:** `out = current + normalizedHistory * mixAmount` — allow up to ~+3 dB energy rise at high Influence; do not force output=input energy.
+
+**Erase:** `overlap = ratio/(ratio+knee)` with `ratio = hist/(cur+eps)`, knee≈0.32; max atten 0.92; no upward energy restore.
+
+**Merge:** log-magnitude morph with ±18 dB bin delta limit; soft energy stabilisation.
+
+**Blur:** history-only; Blur=0 exact identity; RMS energy preserved after blur.
+
+Recalled spectra get bounded, smoothed energy normalisation (+9 / −6 dB, silence-safe).
+
+Current **phase kept** (no historical phase blending).
 
 ---
 
@@ -120,25 +116,23 @@ out = lerp(cur, hist, influence * forgetWeight)
 AFTERIMAGE/
 ├── CMakeLists.txt
 ├── README.md
+├── docs/LICENSING.md
 └── Source/
-    ├── PluginProcessor.*          # APVTS, processBlock, factory program API
-    ├── PluginEditor.*             # dark UI, knobs, presets combo, tooltips
-    ├── DSP/
-    │   ├── STFTProcessor.*        # rings, Hann, FFT/IFFT, WOLA, spectrum callback
-    │   ├── SpectralEngine.*       # history I/O, random recall wander, mode write-back
-    │   ├── SpectralHistoryBuffer.*
-    │   ├── SpectralFrame.h
-    │   ├── SpectralModes.*        # Shadow / Erase / Merge
-    │   ├── DryWetMixer.h          # latency delay + equal-power mix helper
-    │   └── ParameterSmoother.h
-    ├── UI/                        # LookAndFeel, MemoryWell, ModeSelector, SpectrumDisplay
+    ├── PluginProcessor.*          # APVTS, processBlock, entitlement dry, factory programs
+    ├── PluginEditor.*             # dark UI, knobs, presets, license chip
+    ├── DSP/                       # STFT, history, modes (retuned)
+    ├── Licensing/                 # Ed25519 offline licenses (message-thread only)
+    ├── UI/                        # LookAndFeel, MemoryWell, LicensePanel, …
     └── Utilities/
         ├── Constants.h
-        └── FactoryPresets.h       # ≥8 parameter-only factory presets
+        └── FactoryPresets.h       # subtle / medium / extreme banks
 ```
 
 Company / codes: `AdamAudio`, manufacturer `Adam`, plugin code `AfIm`.  
 JUCE: local checkout preferred at `~/dev/Spawnclone/JUCE`, else FetchContent 8.0.6.
+
+**Default APVTS values** (new instances only; saved sessions keep stored values):  
+Recall 40%, Influence 40%, Forget 25%, Blur 12%, Transient Preserve 35% — matches Soft Shadow.
 
 ---
 
@@ -148,11 +142,11 @@ JUCE: local checkout preferred at `~/dev/Spawnclone/JUCE`, else FetchContent 8.0
 |----|-----|------|
 | `mode` | Shadow / Erase / Merge | All three transform |
 | `memoryLength` | Memory | 0.1–10 s, skewed short |
-| `recallPosition` | Recall | 0–100%, default 45% (Memory Well ring) |
-| `influence` | Influence | 0–100%, default 50% |
-| `forget` | Forget | 0–100%, default 35% |
-| `blur` | Blur | applied to history magnitudes |
-| `transientPreserve` | Transients | used in all modes |
+| `recallPosition` | Recall | 0–100%, default **40%** |
+| `influence` | Influence | 0–100%, default **40%** (perceptual mid curve) |
+| `forget` | Forget | 0–100%, default **25%** (retention floor) |
+| `blur` | Blur | history magnitudes; default **12%** |
+| `transientPreserve` | Transients | default **35%**; max reduction 0.65 |
 | `freeze` | Freeze | bool |
 | `randomRecall` | Random | slow wander around Recall Position |
 | `outputGain` | Output | −24…+12 dB |
@@ -161,7 +155,7 @@ JUCE: local checkout preferred at `~/dev/Spawnclone/JUCE`, else FetchContent 8.0
 
 Smoothing lives in `ParameterSmoother` / processBlock. Mode crossfade ~80 ms in `SpectralModeProcessor`.
 
-Factory presets via `AudioProcessor` program API + UI combo (`FactoryPresets.h`). Loading a preset clears live history.
+Factory presets retuned (Subtle / Medium / Extreme). Loading a preset clears live history.
 
 ---
 
@@ -200,6 +194,10 @@ Manual check in Ableton Live 12: quit fully after rebuild so the binary reloads.
 
 ## 8. What to work on next (recommended)
 
+### Install production license public key
+
+Replace the zeroed production key slot in `LicenseVerifier.cpp` before commercial release. Keep private key offline. See `docs/LICENSING.md`.
+
 ### Deferred — Stereo Link
 
 Independent L/R histories remain. Shared/averaged memory would need careful RT-safe design so it does not destabilize isolation or Influence≈0 identity. Prefer not shipping a half-baked link.
@@ -207,7 +205,8 @@ Independent L/R histories remain. Shared/averaged memory would need careful RT-s
 ### Optional polish
 
 - User preset save slots (beyond factory programs)
-- Further Erase pumping review on percussion
+- DAW audition matrix for Influence curve fine-tuning
+- Online activation / machine deactivation server
 - Recall / Smear modes (product backlog)
 
 ---
@@ -244,4 +243,4 @@ When responding:
 
 ---
 
-*End of handoff. AFTERIMAGE Phase 8 polish (Random + presets); Stereo Link deferred.*
+*End of handoff. AFTERIMAGE audible retune + offline licensing; Stereo Link deferred.*

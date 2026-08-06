@@ -10,6 +10,10 @@
 #include "UI/SpectrumDisplay.h"
 #include "Utilities/FactoryPresets.h"
 
+#if defined (AFTERIMAGE_ENABLE_LICENSING)
+#include "UI/LicensePanel.h"
+#endif
+
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include <array>
@@ -49,6 +53,11 @@ private:
     juce::Label memoryStatusLabel;
     juce::String cachedMemoryStatus_;
     juce::ComboBox presetBox;
+
+#if defined (AFTERIMAGE_ENABLE_LICENSING)
+    std::unique_ptr<LicensePanel> licensePanel;
+    int licenseRefreshCounter_ = 0;
+#endif
 
     ModeSelector modeSelector;
     SpectrumDisplay meterDisplay;
