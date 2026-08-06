@@ -143,7 +143,7 @@ AfterimageAudioProcessorEditor::~AfterimageAudioProcessorEditor()
 
 void AfterimageAudioProcessorEditor::buildPresetMenu()
 {
-    presetBox.setTextWhenNothingSelected ("Preset");
+    presetBox.setTextWhenNothingSelected ("Custom");
     presetBox.setTooltip ("PRESET\nFactory starting points. Parameters only; history clears on load.");
     for (int i = 0; i < afterimage::factory::kNumPresets; ++i)
         presetBox.addItem (afterimage::factory::kPresets[static_cast<std::size_t> (i)].name, i + 1);
@@ -354,9 +354,18 @@ void AfterimageAudioProcessorEditor::timerCallback()
         memoryStatusLabel.setText (memText, juce::dontSendNotification);
     }
 
-    const int wantId = audioProcessor.getCurrentProgram() + 1;
-    if (presetBox.getSelectedId() != wantId)
+    const int wantId = audioProcessor.isCustomProgram()
+                           ? 0
+                           : audioProcessor.getCurrentProgram() + 1;
+    if (wantId == 0)
+    {
+        if (presetBox.getSelectedId() != 0)
+            presetBox.setSelectedId (0, juce::dontSendNotification);
+    }
+    else if (presetBox.getSelectedId() != wantId)
+    {
         presetBox.setSelectedId (wantId, juce::dontSendNotification);
+    }
 
 #if defined (AFTERIMAGE_ENABLE_LICENSING)
     if (licensePanel != nullptr)
@@ -375,4 +384,24 @@ void AfterimageAudioProcessorEditor::timerCallback()
         if (auto* param = audioProcessor.getAPVTS().getParameter (specs[i].id))
             knobs[i]->setValueText (param->getCurrentValueAsText());
     }
+
+    // Subtle MATCH correction readout in tooltip when enabled.
+    if (gainMatchButton.getToggleState())
+    {
+        const float db = audioProcessor.getGainMatchCorrectionDb();
+        gainMatchButton.setTooltip (
+            "GAIN MATCH\n"
+            "Matches the completed processed blend to the latency-aligned dry "
+            "level using slow broadband correction. It does not change the Mix balance.\n"
+            "MATCH " + juce::String (db, 1) + " dB");
+    }
+}
+
+juce::AudioProcessorEditor* AfterimageAudioProcessor::createEditor()
+{
+#if defined (AFTERIMAGE_UNIT_TESTS)
+    return nullptr;
+#else
+    return new AfterimageAudioProcessorEditor (*this);
+#endif
 }

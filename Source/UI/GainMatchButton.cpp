@@ -7,9 +7,9 @@ GainMatchButton::GainMatchButton()
     setClickingTogglesState (true);
     setButtonText ("MATCH");
     setTooltip ("GAIN MATCH\n"
-                "When on, applies smoothed wet makeup so wet level tracks dry RMS "
-                "(clamped +/-12 dB). Helps Mix and processing keep perceived loudness steady.\n"
-                "Off restores identity. Bypass still passes dry.");
+                "Matches the completed processed blend to the latency-aligned dry "
+                "level using slow broadband correction. It does not change the Mix balance.\n"
+                "Bypass still passes dry unaltered.");
     setComponentID ("gainMatch");
     getProperties().set ("afterimageRole", roleId);
 }
@@ -46,6 +46,6 @@ void GainMatchButton::paintButton (juce::Graphics& g, bool highlighted, bool dow
     g.setColour (on ? AfterimageLookAndFeel::accentCyan()
                     : AfterimageLookAndFeel::textMuted());
     g.setFont (AfterimageFonts::get (AfterimageFontRole::ControlLabel));
-    g.drawFittedText (on ? "MATCHED" : "MATCH",
+    g.drawFittedText ("MATCH",
                       bounds.toNearestInt(), juce::Justification::centred, 1);
 }

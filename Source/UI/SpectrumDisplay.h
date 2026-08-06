@@ -3,8 +3,10 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 /**
-    Compact live magnitude spectrum placeholder.
-    Phase 7 feeds real FFT magnitudes via a lock-free snapshot.
+    Compact input/output level meters for the editor chrome.
+
+    Intentionally level bars (not a full FFT spectrum view). Peak levels are
+    published from the processor via VisualizationAtomics.
 */
 class SpectrumDisplay : public juce::Component
 {

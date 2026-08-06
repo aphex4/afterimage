@@ -18,7 +18,6 @@ struct ParameterSmoother
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> outputGain;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear>         bypassAmount;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear>         gainMatchAmount;
-    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> gainMatchMakeup;
 
     // Frame-smoothed (engine advances by hopSize samples per FFT frame)
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> influence;
@@ -41,24 +40,23 @@ struct ParameterSmoother
 
         gainMatchAmount.reset (sampleRate, constants::gainMatchSmoothSec);
         gainMatchAmount.setCurrentAndTargetValue (0.0f);
-
-        gainMatchMakeup.reset (sampleRate, constants::gainMatchMakeupSec);
-        gainMatchMakeup.setCurrentAndTargetValue (1.0f);
     }
 
     void prepareFrameSmoothers (double sampleRate)
     {
+        // Initials match current APVTS defaults (Soft Shadow). prepareToPlay snaps
+        // to live APVTS targets so the first frames never ramp from stale values.
         auto init = [sampleRate] (auto& s, float seconds, float initial)
         {
             s.reset (sampleRate, seconds);
             s.setCurrentAndTargetValue (initial);
         };
 
-        init (influence,         constants::influenceSmoothSec, 0.5f);
-        init (recallPosition,    constants::recallSmoothSec,    0.45f);
-        init (forget,            constants::forgetSmoothSec,    0.35f);
-        init (blur,              constants::blurSmoothSec,      0.15f);
-        init (transientPreserve, 0.08f,                         0.5f);
+        init (influence,         constants::influenceSmoothSec, 0.40f);
+        init (recallPosition,    constants::recallSmoothSec,    0.40f);
+        init (forget,            constants::forgetSmoothSec,    0.25f);
+        init (blur,              constants::blurSmoothSec,      0.12f);
+        init (transientPreserve, 0.08f,                         0.35f);
         init (randomRecall,      constants::randomSmoothSec,    0.0f);
     }
 
@@ -75,6 +73,17 @@ struct ParameterSmoother
         blur.setTargetValue (blur01);
         transientPreserve.setTargetValue (transient01);
         randomRecall.setTargetValue (random01);
+    }
+
+    /** Snap frame smoothers to their targets (startup / state load — no ramp). */
+    void snapSpectralToTargets() noexcept
+    {
+        influence.setCurrentAndTargetValue (influence.getTargetValue());
+        recallPosition.setCurrentAndTargetValue (recallPosition.getTargetValue());
+        forget.setCurrentAndTargetValue (forget.getTargetValue());
+        blur.setCurrentAndTargetValue (blur.getTargetValue());
+        transientPreserve.setCurrentAndTargetValue (transientPreserve.getTargetValue());
+        randomRecall.setCurrentAndTargetValue (randomRecall.getTargetValue());
     }
 
     /** Advance spectral smoothers by one STFT hop and return a ModeParams snapshot. */

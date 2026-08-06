@@ -84,7 +84,26 @@ Salted BLAKE2b over computer name + logon name + OS name + platform tag. Raw IDs
 |------|---------|---------|
 | `AFTERIMAGE_ENABLE_LICENSING` | ON | Compile licensing into plugin |
 | `AFTERIMAGE_BUILD_LICENSE_TOOL` | OFF | Build `AfterimageLicenseTool` |
-| `AFTERIMAGE_USE_TEST_LICENSE_KEY` | OFF | Embed test public key (never ship Release with this ON) |
+| `AFTERIMAGE_USE_TEST_LICENSE_KEY` | OFF | Embed test public key (**tests / local debug only — never ship**) |
+| `AFTERIMAGE_COMMERCIAL_RELEASE` | OFF | **Release blocker:** compile fails if production public key is still placeholder zeros, or if the test key flag is on |
+| `AFTERIMAGE_ENABLE_SANITIZERS` | OFF | ASan + UBSan on the test target (where supported) |
+
+### Production key injection (commercial packaging)
+
+1. Generate an Ed25519 issuer keypair **offline** (private key never enters this repo or plugin binaries).
+2. Replace the 32-byte `kProductionPublicKey` array in `Source/Licensing/LicenseVerifier.cpp` with the public key bytes.
+3. Configure the shipping build with:
+
+```bash
+cmake -B build-release -S . \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DAFTERIMAGE_COMMERCIAL_RELEASE=ON \
+  -DAFTERIMAGE_USE_TEST_LICENSE_KEY=OFF
+```
+
+4. Confirm configure/compile succeed. A zeroed production key or `AFTERIMAGE_USE_TEST_LICENSE_KEY=ON` fails the build when `AFTERIMAGE_COMMERCIAL_RELEASE=ON`.
+
+Test builds continue to use `-DAFTERIMAGE_USE_TEST_LICENSE_KEY=ON` with the fixture public key in `LicensePublicKeys.inc`. The AFTERIMAGE_Tests target always embeds the test key.
 
 ## License tool
 

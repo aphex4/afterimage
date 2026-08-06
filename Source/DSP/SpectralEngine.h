@@ -57,6 +57,16 @@ public:
     /** Message-thread safe: request a clear; consumed on the audio thread. */
     void requestClearHistory() noexcept { clearHistoryRequested_.store (true, std::memory_order_release); }
 
+    /** Snap frame smoothers to current targets (call after setSpectralParameterTargets on prepare). */
+    void snapSpectralSmoothersToTargets() noexcept { frameSmoothers_.snapSpectralToTargets(); }
+
+    /** Read current frame-smoother values (tests / startup verification). */
+    [[nodiscard]] float getSmoothedInfluence() const noexcept { return frameSmoothers_.influence.getCurrentValue(); }
+    [[nodiscard]] float getSmoothedRecall() const noexcept { return frameSmoothers_.recallPosition.getCurrentValue(); }
+    [[nodiscard]] float getSmoothedForget() const noexcept { return frameSmoothers_.forget.getCurrentValue(); }
+    [[nodiscard]] float getSmoothedBlur() const noexcept { return frameSmoothers_.blur.getCurrentValue(); }
+    [[nodiscard]] float getSmoothedTransient() const noexcept { return frameSmoothers_.transientPreserve.getCurrentValue(); }
+
     void process (juce::AudioBuffer<float>& buffer) noexcept;
 
     [[nodiscard]] int getLatencySamples() const noexcept { return stft_.getLatencySamples(); }

@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
-#include "PluginEditor.h"
+
+#include <cmath>
 
 namespace
 {
@@ -11,6 +12,43 @@ juce::String secondsText (float seconds, int)
     return seconds < 1.0f ? juce::String (seconds, 2) + " s" : juce::String (seconds, 1) + " s";
 }
 juce::String dbText (float db, int) { return juce::String (db, 1) + " dB"; }
+
+bool paramsMatchPreset (const juce::AudioProcessorValueTreeState& apvts, int index) noexcept
+{
+    if (index < 0 || index >= afterimage::factory::kNumPresets)
+        return false;
+
+    const auto& pr = afterimage::factory::kPresets[static_cast<std::size_t> (index)];
+    auto near = [] (float a, float b, float tol) { return std::abs (a - b) <= tol; };
+
+    auto* mode = apvts.getRawParameterValue (idMode);
+    auto* mem = apvts.getRawParameterValue (idMemoryLength);
+    auto* recall = apvts.getRawParameterValue (idRecallPosition);
+    auto* infl = apvts.getRawParameterValue (idInfluence);
+    auto* forget = apvts.getRawParameterValue (idForget);
+    auto* blur = apvts.getRawParameterValue (idBlur);
+    auto* trans = apvts.getRawParameterValue (idTransientPreserve);
+    auto* freeze = apvts.getRawParameterValue (idFreeze);
+    auto* random = apvts.getRawParameterValue (idRandomRecall);
+    auto* outG = apvts.getRawParameterValue (idOutputGain);
+    auto* mix = apvts.getRawParameterValue (idMix);
+    if (mode == nullptr || mem == nullptr || recall == nullptr || infl == nullptr
+        || forget == nullptr || blur == nullptr || trans == nullptr || freeze == nullptr
+        || random == nullptr || outG == nullptr || mix == nullptr)
+        return false;
+
+    return juce::roundToInt (mode->load()) == pr.mode
+        && near (mem->load(), pr.memoryLengthSec, 0.02f)
+        && near (recall->load(), pr.recallPosition, 0.002f)
+        && near (infl->load(), pr.influence, 0.002f)
+        && near (forget->load(), pr.forget, 0.002f)
+        && near (blur->load(), pr.blur, 0.002f)
+        && near (trans->load(), pr.transientPreserve, 0.002f)
+        && ((freeze->load() > 0.5f) == pr.freeze)
+        && near (random->load(), pr.randomRecall, 0.002f)
+        && near (outG->load(), pr.outputGainDb, 0.15f)
+        && near (mix->load(), pr.mix, 0.002f);
+}
 } // namespace
 
 AfterimageAudioProcessor::AfterimageAudioProcessor()
@@ -40,11 +78,17 @@ AfterimageAudioProcessor::AfterimageAudioProcessor()
     pGainMatch = bind (idGainMatch);
 
 #if defined (AFTERIMAGE_ENABLE_LICENSING)
+  #if ! defined (AFTERIMAGE_UNIT_TESTS)
     licenseManager_.initialise();
+  #endif
     entitlementDryAmount_.reset (44100.0, 0.05);
     entitlementDryAmount_.setCurrentAndTargetValue (
+  #if defined (AFTERIMAGE_UNIT_TESTS)
+        0.0f);
+  #else
         licenseManager_.getEntitlement()
             == afterimage::licensing::EntitlementState::DryPassThrough ? 1.0f : 0.0f);
+  #endif
 #endif
 }
 
@@ -60,7 +104,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout AfterimageAudioProcessor::cr
         memoryLengthDefaultSec,
         juce::AudioParameterFloatAttributes().withStringFromValueFunction (secondsText)));
     // Defaults: demonstrative but musical (saved sessions keep their values).
-    // Was: Recall 45%, Influence 50%, Forget 35%, Blur 15%, Transient 50%.
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { idRecallPosition, 1 }, "Recall Position",
         juce::NormalisableRange<float> (0.0f, 1.0f, 0.001f), 0.40f,
@@ -104,6 +147,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout AfterimageAudioProcessor::cr
     return { params.begin(), params.end() };
 }
 
+void AfterimageAudioProcessor::resetAdaptiveProcessingState() noexcept
+{
+    gainMatch_.reset();
+    smoothers.gainMatchAmount.setCurrentAndTargetValue (
+        pGainMatch != nullptr && pGainMatch->load() > 0.5f ? 1.0f : 0.0f);
+}
+
 void AfterimageAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     maxChannels_ = juce::jmax (2, juce::jmax (getTotalNumInputChannels(), getTotalNumOutputChannels()));
@@ -111,6 +161,7 @@ void AfterimageAudioProcessor::prepareToPlay (double sampleRate, int samplesPerB
 
     engine.prepare (sampleRate, maxChunk_, maxChannels_);
     smoothers.prepareSampleSmoothers (sampleRate);
+    gainMatch_.prepare (sampleRate);
 
     const int latency = engine.getLatencySamples();
     dryWetMixer.prepare (maxChannels_, maxChunk_, latency);
@@ -123,17 +174,13 @@ void AfterimageAudioProcessor::prepareToPlay (double sampleRate, int samplesPerB
     delayedPtrs_.assign (static_cast<size_t> (maxChannels_), nullptr);
 
     updateParameterTargets();
+    // Snap sample + frame smoothers to live APVTS — no startup ramp from stale defaults.
     smoothers.mix.setCurrentAndTargetValue (smoothers.mix.getTargetValue());
     smoothers.outputGain.setCurrentAndTargetValue (smoothers.outputGain.getTargetValue());
     smoothers.bypassAmount.setCurrentAndTargetValue (smoothers.bypassAmount.getTargetValue());
     smoothers.gainMatchAmount.setCurrentAndTargetValue (smoothers.gainMatchAmount.getTargetValue());
-    smoothers.gainMatchMakeup.setCurrentAndTargetValue (1.0f);
-
-    const double sr = juce::jmax (1.0, sampleRate);
-    gainMatchRmsCoeff_ = 1.0f - std::exp (-1.0f / (float) (sr * (double) gainMatchRmsTauSec));
-    gainMatchDryRms_ = 0.0f;
-    gainMatchWetRms_ = 0.0f;
-    gainMatchMakeupTarget_ = 1.0f;
+    engine.snapSpectralSmoothersToTargets();
+    resetAdaptiveProcessingState();
 
 #if defined (AFTERIMAGE_ENABLE_LICENSING)
     entitlementDryAmount_.reset (sampleRate, 0.05);
@@ -211,50 +258,17 @@ void AfterimageAudioProcessor::processChunk (juce::AudioBuffer<float>& wetChunk,
     // Latency-aligned dry
     dryWetMixer.processDryDelay (dryInChunk, delayedDryChunk);
 
-    // Gain Match: measure dry vs wet RMS, update smoothed makeup target (post-mode, pre-mix).
-    {
-        double dryAcc = 0.0, wetAcc = 0.0;
-        const int n = numSamples * juce::jmax (1, numChannels);
-        for (int ch = 0; ch < numChannels; ++ch)
-        {
-            const float* d = delayedDryChunk.getReadPointer (ch);
-            const float* w = wetChunk.getReadPointer (ch);
-            for (int i = 0; i < numSamples; ++i)
-            {
-                dryAcc += (double) d[i] * (double) d[i];
-                wetAcc += (double) w[i] * (double) w[i];
-            }
-        }
+    // Mix → Gain Match on completed mix → bypass → entitlement → output gain
+    // Scratch for one sample of mixed across channels (stack; maxChannels_ small).
+    float mixedScratch[8];
+    const int chLimit = juce::jmin (numChannels, 8);
 
-        const float dryRms = std::sqrt ((float) (dryAcc / (double) juce::jmax (1, n)));
-        const float wetRms = std::sqrt ((float) (wetAcc / (double) juce::jmax (1, n)));
-        const float c = gainMatchRmsCoeff_;
-        gainMatchDryRms_ += c * (dryRms - gainMatchDryRms_);
-        gainMatchWetRms_ += c * (wetRms - gainMatchWetRms_);
-
-        constexpr float kFloor = 1.0e-5f;
-        const float ratio = gainMatchDryRms_ / juce::jmax (kFloor, gainMatchWetRms_);
-        const float makeupDb = juce::jlimit (-gainMatchMaxDb, gainMatchMaxDb, gainToDb (ratio));
-        const float newTarget = dbToGain (makeupDb);
-        const float curDb = gainToDb (gainMatchMakeupTarget_);
-        if (std::abs (makeupDb - curDb) >= gainMatchHystDb
-            || pGainMatch->load() <= 0.5f)
-        {
-            // Snap toward identity when disabled so re-enable starts clean.
-            gainMatchMakeupTarget_ = (pGainMatch->load() > 0.5f) ? newTarget : 1.0f;
-        }
-        smoothers.gainMatchMakeup.setTargetValue (gainMatchMakeupTarget_);
-    }
-
-    // Mix → bypass → entitlement dry → output gain (final trim after bypass)
     for (int i = 0; i < numSamples; ++i)
     {
         const float mix = smoothers.mix.getNextValue();
         const float bypass = smoothers.bypassAmount.getNextValue();
         const float gain = smoothers.outputGain.getNextValue();
         const float matchAmt = smoothers.gainMatchAmount.getNextValue();
-        const float makeup = smoothers.gainMatchMakeup.getNextValue();
-        const float wetScale = 1.0f + matchAmt * (makeup - 1.0f);
 #if defined (AFTERIMAGE_ENABLE_LICENSING)
         const float entitlementDry = entitlementDryAmount_.getNextValue();
 #else
@@ -264,15 +278,35 @@ void AfterimageAudioProcessor::processChunk (juce::AudioBuffer<float>& wetChunk,
         const float dryGain = std::cos (mix * juce::MathConstants<float>::halfPi);
         const float wetGain = std::sin (mix * juce::MathConstants<float>::halfPi);
 
-        for (int ch = 0; ch < numChannels; ++ch)
+        float dryPower = 0.0f;
+        float mixedPower = 0.0f;
+
+        for (int ch = 0; ch < chLimit; ++ch)
         {
             const float dry = delayedDryChunk.getSample (ch, i);
-            const float wet = wetChunk.getSample (ch, i) * wetScale;
-            float mixed = dry * dryGain + wet * wetGain;
-            mixed = mixed * (1.0f - bypass) + dry * bypass;
-            mixed = mixed * (1.0f - entitlementDry) + dry * entitlementDry;
-            mixed *= gain;
-            wetChunk.setSample (ch, i, mixed);
+            const float wet = wetChunk.getSample (ch, i);
+            const float mixed = dry * dryGain + wet * wetGain;
+            mixedScratch[ch] = mixed;
+            dryPower += dry * dry;
+            mixedPower += mixed * mixed;
+        }
+
+        const float invCh = 1.0f / (float) juce::jmax (1, chLimit);
+        dryPower *= invCh;
+        mixedPower *= invCh;
+
+        const float gmScalar = gainMatch_.advanceAndGetScalar (dryPower, mixedPower);
+        // Enable blend: matchAmt=0 → unity (GM off); matchAmt=1 → full correction.
+        const float scalar = 1.0f + matchAmt * (gmScalar - 1.0f);
+
+        for (int ch = 0; ch < chLimit; ++ch)
+        {
+            const float dry = delayedDryChunk.getSample (ch, i);
+            float out = mixedScratch[ch] * scalar;
+            out = out * (1.0f - bypass) + dry * bypass;
+            out = out * (1.0f - entitlementDry) + dry * entitlementDry;
+            out *= gain;
+            wetChunk.setSample (ch, i, out);
         }
     }
 
@@ -337,7 +371,9 @@ int AfterimageAudioProcessor::getNumPrograms()
 
 int AfterimageAudioProcessor::getCurrentProgram()
 {
-    return currentProgram_;
+    // Hosts expect [0, numPrograms). Custom state keeps last factory index but
+    // getProgramName reports "Custom" via isCustomProgram().
+    return juce::jlimit (0, afterimage::factory::kNumPresets - 1, currentProgram_);
 }
 
 void AfterimageAudioProcessor::setCurrentProgram (int index)
@@ -346,15 +382,22 @@ void AfterimageAudioProcessor::setCurrentProgram (int index)
         return;
 
     currentProgram_ = index;
+    customProgram_ = false;
     afterimage::factory::applyPreset (apvts, index);
-    engine.requestClearHistory(); // never carry spectral history across presets
+    engine.requestClearHistory(); // clears history + Erase familiarity on audio thread
+    resetAdaptiveProcessingState();
     updateParameterTargets();
+    engine.snapSpectralSmoothersToTargets();
 }
 
 const juce::String AfterimageAudioProcessor::getProgramName (int index)
 {
     if (index < 0 || index >= afterimage::factory::kNumPresets)
         return {};
+
+    // Do not falsely report a factory name when restored/edited state is custom.
+    if (customProgram_ && index == getCurrentProgram())
+        return "Custom";
 
     return afterimage::factory::kPresets[static_cast<std::size_t> (index)].name;
 }
@@ -364,8 +407,37 @@ void AfterimageAudioProcessor::changeProgramName (int, const juce::String&)
     // Factory presets are fixed.
 }
 
+void AfterimageAudioProcessor::syncProgramIndexFromParameters() noexcept
+{
+    for (int i = 0; i < afterimage::factory::kNumPresets; ++i)
+    {
+        if (paramsMatchPreset (apvts, i))
+        {
+            currentProgram_ = i;
+            customProgram_ = false;
+            return;
+        }
+    }
+
+    // Keep a valid host index but mark custom so getProgramName does not lie.
+    customProgram_ = true;
+    if (currentProgram_ < 0 || currentProgram_ >= afterimage::factory::kNumPresets)
+        currentProgram_ = 0;
+}
+
+void AfterimageAudioProcessor::applyRestoredParameterTree (const juce::ValueTree& tree)
+{
+    apvts.replaceState (tree);
+    engine.requestClearHistory();
+    resetAdaptiveProcessingState();
+    updateParameterTargets();
+    engine.snapSpectralSmoothersToTargets();
+    syncProgramIndexFromParameters();
+}
+
 void AfterimageAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
+    // Licensing / entitlement never enters session state — APVTS parameters only.
     if (auto xml = apvts.copyState().createXml())
         copyXmlToBinary (*xml, destData);
 }
@@ -375,20 +447,18 @@ void AfterimageAudioProcessor::setStateInformation (const void* data, int sizeIn
     if (auto xml = getXmlFromBinary (data, sizeInBytes))
     {
         if (xml->hasTagName (apvts.state.getType()))
-        {
-            apvts.replaceState (juce::ValueTree::fromXml (*xml));
-            engine.requestClearHistory(); // audio thread clears — no race
-            updateParameterTargets();
-        }
+            applyRestoredParameterTree (juce::ValueTree::fromXml (*xml));
     }
-}
-
-juce::AudioProcessorEditor* AfterimageAudioProcessor::createEditor()
-{
-    return new AfterimageAudioProcessorEditor (*this);
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
     return new AfterimageAudioProcessor();
 }
+
+#if defined (AFTERIMAGE_UNIT_TESTS)
+juce::AudioProcessorEditor* AfterimageAudioProcessor::createEditor()
+{
+    return nullptr;
+}
+#endif

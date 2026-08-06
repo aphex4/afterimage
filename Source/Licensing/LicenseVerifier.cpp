@@ -22,6 +22,25 @@ constexpr std::uint8_t kProductionPublicKey[32] = {
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
 };
 
+constexpr bool isAllZeroKey (const std::uint8_t* key) noexcept
+{
+    for (int i = 0; i < 32; ++i)
+        if (key[i] != 0)
+            return false;
+    return true;
+}
+
+[[maybe_unused]] constexpr bool kProductionKeyIsPlaceholder = isAllZeroKey (kProductionPublicKey);
+
+#if defined (AFTERIMAGE_COMMERCIAL_RELEASE)
+  #if defined (AFTERIMAGE_USE_TEST_LICENSE_KEY)
+    #error "AFTERIMAGE_USE_TEST_LICENSE_KEY cannot be enabled in AFTERIMAGE_COMMERCIAL_RELEASE builds."
+  #endif
+    static_assert (! kProductionKeyIsPlaceholder,
+                   "Production licensing public key has not been installed. "
+                   "Replace kProductionPublicKey before AFTERIMAGE_COMMERCIAL_RELEASE.");
+#endif
+
 #if defined (AFTERIMAGE_USE_TEST_LICENSE_KEY)
 // Deterministic test public key matching Tests/Fixtures/test_ed25519_seed.bin
 // Generated via AfterimageLicenseTool --gen-test-keys (seed = 32 × 0x42).

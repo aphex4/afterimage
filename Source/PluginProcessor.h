@@ -6,6 +6,7 @@
 #include "DSP/SpectralEngine.h"
 #include "DSP/SpectralModes.h"
 #include "DSP/DryWetMixer.h"
+#include "DSP/GainMatch.h"
 #include "DSP/VisualizationAtomics.h"
 #include "Utilities/Constants.h"
 #include "Utilities/FactoryPresets.h"
@@ -21,12 +22,14 @@
     AFTERIMAGE spectral memory processor (Shadow / Erase / Merge).
 
     Routing (documented):
-      1) latency-aligned dry + wet (identity STFT + spectral modes)
-      2) optional Gain Match wet makeup (dry/wet RMS, +/-12 dB, smoothed)
-      3) equal-power dry/wet mix
+      1) latency-aligned dry + processed wet (identity STFT + spectral modes)
+      2) equal-power dry/wet Mix → mixed
+      3) Gain Match: one broadband scalar on mixed (dry vs mixed power, not wet-only)
       4) bypass crossfade (toward latency-aligned dry)
-      5) final output gain  ← applied AFTER bypass so it always trims the audible output
+      5) trial-entitlement dry crossfade (if licensing enabled)
+      6) final Output Gain  ← after bypass so it always trims the audible output
 
+    Mix=0% → GM measures dry vs dry → ~unity. Bypass=100% → dry unaltered by GM.
     Host callbacks larger than maxInternalBlockSize are processed in fixed chunks
     using preallocated scratch (no audio-thread allocation).
 */
@@ -48,13 +51,22 @@ public:
     bool acceptsMidi() const override { return false; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
-    double getTailLengthSeconds() const override { return 0.0; }
+
+    /**
+        Finite tail for hosts: max memory + FFT latency @ 44.1 kHz + margin.
+        Freeze can sustain indefinitely; the host API requires a finite value —
+        that limitation is intentional (see constants::pluginTailLengthSec).
+    */
+    double getTailLengthSeconds() const override { return afterimage::constants::pluginTailLengthSec; }
 
     int getNumPrograms() override;
     int getCurrentProgram() override;
     void setCurrentProgram (int index) override;
     const juce::String getProgramName (int index) override;
     void changeProgramName (int index, const juce::String& newName) override;
+
+    /** True when APVTS does not match the reported factory program index. */
+    bool isCustomProgram() const noexcept { return customProgram_; }
 
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
@@ -72,14 +84,24 @@ public:
     float getOutputLevel() const noexcept { return engine.getVisualization().loadOutputPeak(); }
     float getHistoryFill() const noexcept { return engine.getVisualization().loadHistoryFill(); }
 
+    /** Debug / UI: current Gain Match correction in dB (0 when inactive / settled). */
+    float getGainMatchCorrectionDb() const noexcept { return gainMatch_.loadDebugCorrectionDb(); }
+
 #if defined (AFTERIMAGE_ENABLE_LICENSING)
     afterimage::licensing::LicenseManager& getLicenseManager() noexcept { return licenseManager_; }
 #endif
 
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
+    /** Reset Gain Match detector / correction (presets & state load). */
+    void resetAdaptiveProcessingState() noexcept;
+
+    /** Apply a restored APVTS ValueTree (setStateInformation + migration tests). */
+    void applyRestoredParameterTree (const juce::ValueTree& tree);
+
 private:
     void updateParameterTargets();
+    void syncProgramIndexFromParameters() noexcept;
     void processChunk (juce::AudioBuffer<float>& wetChunk,
                        juce::AudioBuffer<float>& dryInChunk,
                        juce::AudioBuffer<float>& delayedDryChunk) noexcept;
@@ -88,6 +110,7 @@ private:
     afterimage::SpectralEngine engine;
     afterimage::ParameterSmoother smoothers;
     afterimage::DryWetMixer dryWetMixer;
+    afterimage::GainMatchController gainMatch_;
 
     juce::AudioBuffer<float> inputScratch;
     juce::AudioBuffer<float> delayedDry;
@@ -112,13 +135,8 @@ private:
     std::atomic<float>* pBypass = nullptr;
     std::atomic<float>* pGainMatch = nullptr;
 
-    // Gain Match RMS envelopes (audio thread only; prepared once)
-    float gainMatchDryRms_ = 0.0f;
-    float gainMatchWetRms_ = 0.0f;
-    float gainMatchMakeupTarget_ = 1.0f;
-    float gainMatchRmsCoeff_ = 0.0f;
-
     int currentProgram_ = 0;
+    bool customProgram_ = false;
 
 #if defined (AFTERIMAGE_ENABLE_LICENSING)
     afterimage::licensing::LicenseManager licenseManager_;

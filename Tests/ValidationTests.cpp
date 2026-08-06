@@ -20,6 +20,7 @@ int gFailures = 0;
 
 void runEffectStrengthTests();
 void runLicensingTests();
+void runGainMatchTests();
 
 #define CHECK(cond) \
     do { \
@@ -954,6 +955,7 @@ int main()
     testStereoIsolation();
     runEffectStrengthTests();
     runLicensingTests();
+    runGainMatchTests();
 
     afterimage::measure::runEffectStrengthMeasurements (
         afterimage::measure::envWantsMeasurements());

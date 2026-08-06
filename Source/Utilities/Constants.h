@@ -41,11 +41,32 @@ namespace constants
     constexpr float  randomSmoothSec    = 0.15f;
     constexpr float  modeCrossfadeSec   = 0.08f;
     constexpr float  bypassSmoothSec    = 0.02f;
-    constexpr float  gainMatchSmoothSec = 0.05f;   // enable/disable crossfade
-    constexpr float  gainMatchMakeupSec = 0.12f;   // makeup gain smoothing
-    constexpr float  gainMatchRmsTauSec = 0.08f;   // dry/wet RMS envelope
-    constexpr float  gainMatchMaxDb     = 12.0f;   // makeup clamp +/-
-    constexpr float  gainMatchHystDb    = 0.35f;   // ignore tiny RMS ratio changes
+
+    // -------------------------------------------------------------------------
+    // Gain Match (broadband loudness trim on completed mix — not a compressor)
+    // Selected for perceptual transparency: slow detector + asymmetric correction
+    // so transients / sibilance do not modulate gain like a de-esser.
+    // -------------------------------------------------------------------------
+    constexpr float  gainMatchSmoothSec       = 0.05f;  // enable/disable crossfade
+    constexpr float  gainMatchDetectorTauSec  = 0.45f;  // mean-square envelope (~300–600 ms)
+    constexpr float  gainMatchAttenuationSec  = 0.35f;  // correction toward quieter (~250–500 ms)
+    constexpr float  gainMatchRecoverySec     = 1.00f;  // correction toward louder (~750–1500 ms)
+    constexpr float  gainMatchGateReturnSec   = 0.50f;  // return to 0 dB when silence-gated
+    constexpr float  gainMatchMaxAttenDb      = 6.0f;   // max attenuation of mixed signal
+    constexpr float  gainMatchMaxMakeupDb     = 4.0f;   // max makeup (stricter than atten)
+    constexpr float  gainMatchDeadbandDb      = 0.50f;  // hold inside final dB-error deadband
+    constexpr float  gainMatchSilenceOpenDb   = -75.0f; // open gate above this (hysteresis)
+    constexpr float  gainMatchSilenceCloseDb  = -80.0f; // close gate below this
+    constexpr float  gainMatchPowerEpsilon    = 1.0e-20f;
+
+    // Plugin tail: max memory + FFT latency @ 44.1 kHz + reconstruction margin.
+    // Freeze can sustain indefinitely; hosts require a finite value (documented).
+    constexpr double pluginTailMemorySec = (double) memoryLengthMaxSec;
+    constexpr double pluginTailFftLatencySec = (double) fftSize / 44100.0;
+    constexpr double pluginTailMarginSec = 0.25;
+    constexpr double pluginTailLengthSec = pluginTailMemorySec
+                                         + pluginTailFftLatencySec
+                                         + pluginTailMarginSec;
 
     // Random Recall: slow LPF wander around Recall Position (not per-hop chaos)
     constexpr float  randomRecallMaxDepth  = 0.35f;  // max |age| offset at Random = 100%

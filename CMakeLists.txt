@@ -37,10 +37,42 @@ endif()
 option(AFTERIMAGE_ENABLE_LICENSING "Enable offline signed-license system" ON)
 option(AFTERIMAGE_BUILD_LICENSE_TOOL "Build AfterimageLicenseTool (not in plugin)" OFF)
 option(AFTERIMAGE_USE_TEST_LICENSE_KEY "Embed test public key (tests / debug only)" OFF)
+option(AFTERIMAGE_COMMERCIAL_RELEASE
+       "Commercial packaging: fail if production license public key is placeholder or test key is on"
+       OFF)
+option(AFTERIMAGE_ENABLE_SANITIZERS "Build tests (and optional plugin) with ASan/UBSan" OFF)
+
+if(AFTERIMAGE_COMMERCIAL_RELEASE)
+    if(AFTERIMAGE_USE_TEST_LICENSE_KEY)
+        message(FATAL_ERROR
+            "AFTERIMAGE_COMMERCIAL_RELEASE=ON cannot be combined with AFTERIMAGE_USE_TEST_LICENSE_KEY=ON.")
+    endif()
+    message(STATUS "AFTERIMAGE: commercial release — production license key required at compile time")
+endif()
 
 if(AFTERIMAGE_USE_TEST_LICENSE_KEY AND CMAKE_BUILD_TYPE STREQUAL "Release")
     message(WARNING "AFTERIMAGE_USE_TEST_LICENSE_KEY is ON for a Release build — do not ship this binary.")
 endif()
+
+# Strong warnings on project sources (JUCE itself uses juce_recommended_warning_flags).
+function(afterimage_apply_project_warnings target)
+    if(MSVC)
+        target_compile_options(${target} PRIVATE /W4)
+    else()
+        target_compile_options(${target} PRIVATE
+            -Wall -Wextra -Wpedantic
+            -Wshadow -Wconversion -Wsign-conversion
+            -Wunreachable-code -Wunused
+            -Wno-unused-parameter)
+    endif()
+endfunction()
+
+function(afterimage_apply_sanitizers target)
+    if(AFTERIMAGE_ENABLE_SANITIZERS AND NOT MSVC AND NOT WIN32)
+        target_compile_options(${target} PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+        target_link_options(${target} PRIVATE -fsanitize=address,undefined)
+    endif()
+endfunction()
 
 # ---------------------------------------------------------------------------
 # Shared sources
@@ -117,7 +149,10 @@ target_compile_definitions(AFTERIMAGE
         JUCE_REPORT_APP_USAGE=0
     PRIVATE
         $<$<BOOL:${AFTERIMAGE_ENABLE_LICENSING}>:AFTERIMAGE_ENABLE_LICENSING=1>
-        $<$<BOOL:${AFTERIMAGE_USE_TEST_LICENSE_KEY}>:AFTERIMAGE_USE_TEST_LICENSE_KEY=1>)
+        $<$<BOOL:${AFTERIMAGE_USE_TEST_LICENSE_KEY}>:AFTERIMAGE_USE_TEST_LICENSE_KEY=1>
+        $<$<BOOL:${AFTERIMAGE_COMMERCIAL_RELEASE}>:AFTERIMAGE_COMMERCIAL_RELEASE=1>)
+
+afterimage_apply_project_warnings(AFTERIMAGE)
 
 target_link_libraries(AFTERIMAGE
     PRIVATE
@@ -137,13 +172,15 @@ target_link_libraries(AFTERIMAGE
         juce::juce_recommended_warning_flags)
 
 # ---------------------------------------------------------------------------
-# Validation + licensing tests (no plugin client)
+# Validation + licensing + Gain Match tests (no plugin UI client)
 # ---------------------------------------------------------------------------
 add_executable(AFTERIMAGE_Tests
     Tests/ValidationTests.cpp
     Tests/EffectStrengthMeasure.cpp
     Tests/EffectStrengthTests.cpp
     Tests/LicensingTests.cpp
+    Tests/GainMatchTests.cpp
+    Source/PluginProcessor.cpp
     ${AFTERIMAGE_DSP_SOURCES}
     ${AFTERIMAGE_LICENSING_SOURCES})
 
@@ -158,12 +195,34 @@ target_compile_definitions(AFTERIMAGE_Tests
         AFTERIMAGE_ENABLE_LICENSING=1
         AFTERIMAGE_USE_TEST_LICENSE_KEY=1
         AFTERIMAGE_LICENSE_TOOL=1
-        AFTERIMAGE_FIXTURES_DIR="${CMAKE_SOURCE_DIR}/Tests/Fixtures")
+        AFTERIMAGE_UNIT_TESTS=1
+        AFTERIMAGE_FIXTURES_DIR="${CMAKE_SOURCE_DIR}/Tests/Fixtures"
+        JucePlugin_Name="AFTERIMAGE"
+        JucePlugin_Desc="AFTERIMAGE"
+        JucePlugin_Manufacturer="AdamAudio"
+        JucePlugin_ManufacturerWebsite=""
+        JucePlugin_ManufacturerEmail=""
+        JucePlugin_ManufacturerCode=0x4164616d
+        JucePlugin_PluginCode=0x4166496d
+        JucePlugin_IsSynth=0
+        JucePlugin_WantsMidiInput=0
+        JucePlugin_ProducesMidiOutput=0
+        JucePlugin_IsMidiEffect=0
+        JucePlugin_EditorRequiresKeyboardFocus=0
+        JucePlugin_Version=0.1.0
+        JucePlugin_VersionCode=0x100
+        JucePlugin_VersionString="0.1.0"
+        JucePlugin_VSTUniqueID=JucePlugin_PluginCode
+        JucePlugin_VSTCategory=kPlugCategEffect)
+
+afterimage_apply_project_warnings(AFTERIMAGE_Tests)
+afterimage_apply_sanitizers(AFTERIMAGE_Tests)
 
 target_link_libraries(AFTERIMAGE_Tests
     PRIVATE
-        juce::juce_dsp
+        juce::juce_audio_processors
         juce::juce_audio_basics
+        juce::juce_dsp
         juce::juce_core
         juce::juce_data_structures
         juce::juce_events)
