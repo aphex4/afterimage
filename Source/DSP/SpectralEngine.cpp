@@ -133,6 +133,7 @@ void SpectralEngine::clearHistoryOnAudioThread() noexcept
 
     std::fill (hasPreviousFrame_.begin(), hasPreviousFrame_.end(), false);
     std::fill (frameCounters_.begin(), frameCounters_.end(), 0);
+    modes_.clearEraseMemory();
     viz_.storeHistoryFill (0.0f);
 }
 
@@ -252,6 +253,7 @@ void SpectralEngine::onSpectrum (float* interleavedFftData, int fftSize, int cha
     if (channelIndex == 0)
     {
         hopParams_ = frameSmoothers_.snapSpectralParamsForHop (stft_.getHopSize(), freezeTarget_);
+        hopParams_.memoryLengthSeconds = memoryLengthSeconds_;
 
         const float hopSec = static_cast<float> (stft_.getHopSize())
                              / static_cast<float> (juce::jmax (1.0, sampleRate_));

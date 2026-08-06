@@ -80,7 +80,7 @@ struct SpectralFrame {
 - **Freeze**: stop writes; keep processing; dry input not frozen  
 - State save/restore: **parameters only — never serialize live history**; clear on load  
 
-### Shadow / Erase / Merge (audible retune)
+### Shadow / Erase / Merge
 
 **Influence mapping** (`mapInfluenceForMode`):
 ```
@@ -94,19 +94,17 @@ historyWeight = floor + (1 - floor) * ageWeightFromForget(...)
 Shadow floor=0.20, Erase=0.15, Merge=0.25
 ```
 
-**Transient Preserve**: max reduction 0.65 (not full shut-off). Flux calibration `*3.2` (was `*4.0`).
+**Transient Preserve**: max reduction 0.65. Flux calibration `*3.2`.
 
-**Shadow:** `out = current + normalizedHistory * mixAmount` — allow up to ~+3 dB energy rise at high Influence; do not force output=input energy.
+**Shadow (unchanged identity):** `out = current + normalizedHistory * mixAmount` — allow up to ~+3 dB energy rise; do not force output=input energy.
 
-**Erase:** `overlap = ratio/(ratio+knee)` with `ratio = hist/(cur+eps)`, knee≈0.32; max atten 0.92; no upward energy restore.
+**Erase:** persistent per-channel familiarity envelope (asymmetric attack/release from recalled history). Contrast-sensitive dB carve of familiar bins; novel content passes. Freeze freezes the envelope. Recall selects the age that updates familiarity; Memory/Forget set persistence/fade. Blur widens erasure regions. No upward energy restore.
 
-**Merge:** log-magnitude morph with ±18 dB bin delta limit; soft energy stabilisation.
+**Merge:** broad envelope transfer (`transferDb` clamped by Influence) plus selective historical landmarks from prominence. Carrier = current (not additive Shadow). Blur broadens envelope. Current phase only.
 
-**Blur:** history-only; Blur=0 exact identity; RMS energy preserved after blur.
+**Blur:** mode-specific meanings (see tooltips / `docs/EFFECT_ENGINE.md`).
 
-Recalled spectra get bounded, smoothed energy normalisation (+9 / −6 dB, silence-safe).
-
-Current **phase kept** (no historical phase blending).
+Current **phase kept** (no historical phase blending in production).
 
 ---
 

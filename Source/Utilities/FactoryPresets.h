@@ -41,18 +41,24 @@ inline constexpr Preset kPresets[] = {
     // --- Subtle ---
     // Demonstrative default: clear ghost on chord changes within a few seconds.
     { "Soft Shadow",       0, 3.0f, 0.40f, 0.40f, 0.25f, 0.12f, 0.35f, false, 0.00f, 0.0f, 1.0f },
-    { "Gentle Morph",      2, 3.0f, 0.40f, 0.38f, 0.22f, 0.18f, 0.40f, false, 0.00f, 0.0f, 1.0f },
-    { "Light Carve",       1, 2.5f, 0.32f, 0.42f, 0.28f, 0.12f, 0.45f, false, 0.00f, 0.0f, 1.0f },
+    // Merge: pink/pad carrier inherits formant-like past identity
+    { "Gentle Morph",      2, 3.5f, 0.45f, 0.42f, 0.22f, 0.28f, 0.38f, false, 0.00f, 0.0f, 1.0f },
+    // Erase: light progressive hollow on loops
+    { "Light Carve",       1, 2.8f, 0.28f, 0.45f, 0.32f, 0.14f, 0.42f, false, 0.00f, 0.0f, 1.0f },
 
     // --- Medium ---
     { "Deep Ghost",        0, 5.0f, 0.58f, 0.55f, 0.22f, 0.22f, 0.35f, false, 0.00f, 0.0f, 1.0f },
-    { "Memory Transfer",   2, 4.0f, 0.50f, 0.52f, 0.28f, 0.20f, 0.40f, false, 0.05f, 0.0f, 1.0f },
-    { "Repetition Eater",  1, 3.0f, 0.35f, 0.58f, 0.30f, 0.10f, 0.50f, false, 0.00f, 0.0f, 1.0f },
+    // Merge: chord/resonance identity transfer
+    { "Memory Transfer",   2, 4.5f, 0.55f, 0.55f, 0.25f, 0.32f, 0.36f, false, 0.05f, 0.0f, 1.0f },
+    // Erase: loop progressively eats familiar spectrum
+    { "Repetition Eater",  1, 3.5f, 0.32f, 0.58f, 0.28f, 0.18f, 0.48f, false, 0.00f, 0.0f, 1.0f },
 
     // --- Extreme ---
     { "Frozen Afterimage", 0, 4.5f, 0.55f, 0.68f, 0.12f, 0.28f, 0.25f, true,  0.00f, 0.0f, 1.0f },
-    { "Spectral Hollow",   1, 3.5f, 0.45f, 0.72f, 0.35f, 0.20f, 0.40f, false, 0.00f, -0.5f, 1.0f },
-    { "Past Life",         2, 6.0f, 0.70f, 0.75f, 0.40f, 0.35f, 0.30f, false, 0.15f, -1.0f, 1.0f },
+    // Erase: frozen spectral stencil hollow
+    { "Spectral Hollow",   1, 4.0f, 0.40f, 0.72f, 0.22f, 0.30f, 0.35f, true,  0.00f, -0.5f, 1.0f },
+    // Merge: extreme past-life formant/landmark impose
+    { "Past Life",         2, 6.0f, 0.68f, 0.78f, 0.35f, 0.42f, 0.28f, false, 0.12f, -1.0f, 1.0f },
 
     // --- Creative extras ---
     { "Drift Memory",      0, 3.5f, 0.45f, 0.50f, 0.30f, 0.22f, 0.40f, false, 0.65f, 0.0f, 1.0f },

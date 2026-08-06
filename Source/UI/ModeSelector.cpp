@@ -9,7 +9,9 @@ ModeSelector::ModeSelector()
     setWantsKeyboardFocus (true);
     setMouseCursor (juce::MouseCursor::PointingHandCursor);
     setTooltip ("MODE\n"
-                "Shadow adds a ghost. Erase carves overlaps. Merge morphs toward memory.");
+                "SHADOW — Adds recalled harmonics behind the current sound.\n"
+                "ERASE — Removes spectral material the sound has repeated.\n"
+                "MERGE — Transfers the recalled sound's spectral identity onto the present.");
     startTimerHz (60);
 }
 

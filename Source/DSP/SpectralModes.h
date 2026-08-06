@@ -20,7 +20,9 @@ enum class DebugAudition
 {
     Normal = 0,
     RecalledOnly,
-    SpectralDelta
+    SpectralDelta,
+    EraseMask,
+    MergeTransfer
 };
 
 struct ModeParams
@@ -33,6 +35,7 @@ struct ModeParams
     float randomRecall = 0.0f;
     float transientStrength = 0.0f;
     float recallAge01 = 0.0f; // same age used for L/R history lookup
+    float memoryLengthSeconds = constants::memoryLengthDefaultSec;
     bool  freeze = false;
 };
 
@@ -119,21 +122,19 @@ void writeInterleavedFromMagnitudePhase (float* interleavedFftData,
 /**
     Shadow / Erase / Merge spectral transforms.
 
-    Phase 5: all three modes modify magnitudes. A short any-mode crossfade
-    (constants::modeCrossfadeSec) dual-applies previous→target so switches stay click-free.
+    Shadow path is isolated and must remain bit-stable unless intentionally changed.
 
-    Retune (audible moderate settings):
-      - perceptual Influence mapping
-      - retention-floor Forget remapping
-      - recalled-spectrum energy normalisation (bounded, smoothed)
-      - mode-specific energy policies
-      - Transient Preserve max reduction 0.65
+    Erase: persistent per-channel familiarity envelope; contrast-sensitive dB carve.
+    Merge: broad envelope transfer + selective historical landmarks (carrier = current).
 */
 class SpectralModeProcessor
 {
 public:
     void prepare (int numBins, double sampleRate = 44100.0, int numChannels = 2);
     void reset();
+
+    /** Clear Erase familiarity envelopes only (history clear / preset load). */
+    void clearEraseMemory() noexcept;
 
     void setMode (SpectralMode mode) noexcept;
     /** Advance mode crossfade without touching magnitudes (e.g. empty history). */
@@ -146,6 +147,10 @@ public:
 
     /** Last smoothed energy scale applied (diagnostic / tests). */
     [[nodiscard]] float getLastEnergyScale (int channelIndex = 0) const noexcept;
+
+    /** Familiarity envelope snapshot (Erase diagnostics / tests). */
+    [[nodiscard]] const float* getEraseFamiliarityEnvelope (int channelIndex = 0) const noexcept;
+    [[nodiscard]] int getEraseFamiliarityNumBins() const noexcept { return numBins_; }
 
     /**
         Apply the active spectral mode into `frame.magnitudes` in-place.
@@ -200,7 +205,7 @@ private:
                                           int channelIndex,
                                           bool updateSmoothers) noexcept;
 
-    /** Bounded, smoothed makeup so quiet history still shapes the mode. */
+    /** Bounded, smoothed makeup so quiet history still shapes the mode (Shadow path). */
     [[nodiscard]] const float* normalizeHistoryEnergy (SpectralMode mode,
                                                        const float* historyMagnitudes,
                                                        const float* currentMagnitudes,
@@ -227,6 +232,33 @@ private:
                               int channelIndex,
                               bool updateSmoothers) noexcept;
 
+    /** Shadow-only path — keep algorithmically isolated from Erase/Merge redesign. */
+    void applyShadowPath (float* magnitudes,
+                          const float* historyMagnitudes,
+                          int numBins,
+                          const ModeParams& params,
+                          int channelIndex,
+                          bool updateSmoothers) noexcept;
+
+    void applyErasePath (float* magnitudes,
+                         const float* historyMagnitudes,
+                         int numBins,
+                         const ModeParams& params,
+                         int channelIndex,
+                         bool updateSmoothers) noexcept;
+
+    void applyMergePath (float* magnitudes,
+                         const float* historyMagnitudes,
+                         int numBins,
+                         const ModeParams& params,
+                         int channelIndex,
+                         bool updateSmoothers) noexcept;
+
+    void updateEraseFamiliarity (const float* historyMagnitudes,
+                                 int numBins,
+                                 const ModeParams& params,
+                                 int channelIndex) noexcept;
+
     int numBins_ = 0;
     int numChannels_ = 2;
     double sampleRate_ = 44100.0;
@@ -242,9 +274,21 @@ private:
     std::vector<float> crossfadeScratch_;
     std::vector<float> histNormScratch_;
 
+    // Erase / Merge scratch (preallocated)
+    std::vector<float> eraseMaskScratch_;
+    std::vector<float> eraseMaskSmoothScratch_;
+    std::vector<float> mergeCurEnvScratch_;
+    std::vector<float> mergeHistEnvScratch_;
+    std::vector<float> mergeLandmarkScratch_;
+    std::vector<float> mergeOutScratch_;
+
     std::vector<float> energyScaleSmoothed_;
     std::vector<float> histMakeupSmoothed_;
     std::vector<float> transientSmoothed_;
+
+    // Per-channel Erase familiarity envelope + mask temporal smooth
+    std::vector<std::vector<float>> eraseFamiliarity_;
+    std::vector<std::vector<float>> eraseMaskSmoothed_;
 };
 
 [[nodiscard]] inline const char* spectralModeName (SpectralMode mode) noexcept

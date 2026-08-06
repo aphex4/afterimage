@@ -19,7 +19,9 @@ MemoryWellComponent::MemoryWellComponent()
     setOpaque (false);
     setWantsKeyboardFocus (true);
     setTooltip ("RECALL RING\n"
-                "Click or drag inside the well to choose memory age. Outer is newest.");
+                "Click or drag inside the well to choose memory age. Outer is newest.\n"
+                "Shadow/Merge: selects the historical spectrum being used.\n"
+                "Erase: selects the age region that updates the familiarity envelope.");
     startTimerHz (60);
 }
 

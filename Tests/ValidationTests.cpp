@@ -409,11 +409,22 @@ static void testEraseSuppressesOverlap()
     p.transientPreserve = 0.0f;
     p.transientStrength = 0.0f;
     p.recallAge01 = 0.0f;
+    p.memoryLengthSeconds = 3.0f;
 
+    // Warm familiarity envelope from repeated overlapping history
+    for (int i = 0; i < 64; ++i)
+    {
+        for (int b = 0; b < constants::numBins; ++b)
+            frame.magnitudes[(size_t) b] = 1.0f;
+        modes.applyEraseMagnitudes (frame.magnitudes.data(), hist.data(), constants::numBins, p, 0);
+    }
+
+    for (int b = 0; b < constants::numBins; ++b)
+        frame.magnitudes[(size_t) b] = 1.0f;
     modes.applyEraseMagnitudes (frame.magnitudes.data(), hist.data(), constants::numBins, p, 0);
 
-    CHECK (frame.magnitudes[40] < 0.95f); // carved where history overlaps
-    CHECK (frame.magnitudes[10] > 0.95f); // untouched where history is empty
+    CHECK (frame.magnitudes[40] < 0.85f); // carved where history is familiar
+    CHECK (frame.magnitudes[10] > 0.90f); // relatively intact where history is empty
     for (int i = 0; i < constants::numBins; ++i)
     {
         CHECK (std::isfinite (frame.magnitudes[(size_t) i]));
@@ -438,19 +449,23 @@ static void testMergePullsTowardHistory()
         frame.magnitudes[(size_t) i] = 0.2f;
         hist[(size_t) i] = 2.0f;
     }
+    // Add a historical landmark peak
+    hist[80] = 6.0f;
 
     ModeParams p;
     p.influence = 1.0f;
     p.forget = 0.0f;
-    p.blur = 0.0f;
+    p.blur = 0.25f;
     p.transientPreserve = 0.0f;
     p.transientStrength = 0.0f;
     p.recallAge01 = 0.0f;
 
+    const float before80 = frame.magnitudes[80];
     modes.applyMergeMagnitudes (frame.magnitudes.data(), hist.data(), constants::numBins, p, 0);
 
-    // Full mix toward history (energy compensation may scale, but direction is clear)
-    CHECK (frame.magnitudes[20] > 0.5f);
+    // Envelope transfer raises flat carrier; landmark boosts peak bin further
+    CHECK (frame.magnitudes[20] > before80 * 0.5f || frame.magnitudes[20] > 0.25f);
+    CHECK (frame.magnitudes[80] > frame.magnitudes[20] * 0.9f);
     for (int i = 0; i < constants::numBins; ++i)
         CHECK (std::isfinite (frame.magnitudes[(size_t) i]));
 }

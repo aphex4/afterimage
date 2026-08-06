@@ -9,19 +9,35 @@ const AfterimageAudioProcessorEditor::DockItem* dockItems()
     // Tips use ASCII only (no em/en dashes, no smart quotes).
     static const AfterimageAudioProcessorEditor::DockItem items[] = {
         { "MEMORY", afterimage::constants::idMemoryLength,
-          "MEMORY\nHow far back searchable spectral history extends (0.1 to 10 s).",
+          "MEMORY\n"
+          "How far back searchable spectral history extends (0.1 to 10 s).\n"
+          "Erase: persistence horizon of the familiarity envelope.\n"
+          "Merge/Shadow: active recall window length.",
           AfterimageAudioProcessorEditor::DockGroup::Memory },
         { "FORGET", afterimage::constants::idForget,
-          "FORGET\nHow quickly older recalled frames lose weight.",
+          "FORGET\n"
+          "Shadow/Merge: how quickly older recalled frames lose weight.\n"
+          "Erase: how quickly familiarity fades from the erasure memory.",
           AfterimageAudioProcessorEditor::DockGroup::Memory },
         { "INFLUENCE", afterimage::constants::idInfluence,
-          "INFLUENCE\nHow strongly recalled memory affects the current spectrum. Mid settings are intentionally audible. 0% is transparent.",
+          "INFLUENCE\n"
+          "Shadow: ghost amount.\n"
+          "Erase: depth of familiar-content suppression.\n"
+          "Merge: strength of spectral identity transfer.\n"
+          "0% is transparent.",
           AfterimageAudioProcessorEditor::DockGroup::Spectral },
         { "BLUR", afterimage::constants::idBlur,
-          "BLUR\nSmooths history magnitudes across neighboring frequency bins (energy preserved).",
+          "BLUR\n"
+          "Shadow: smooths recalled magnitudes across bins.\n"
+          "Erase: widens erasure regions.\n"
+          "Merge: broadens historical envelope transfer.",
           AfterimageAudioProcessorEditor::DockGroup::Spectral },
         { "TRANSIENT", afterimage::constants::idTransientPreserve,
-          "TRANSIENT\nPreserves attacks by reducing influence on detected transients (never fully shuts the effect off).",
+          "TRANSIENT\n"
+          "Shadow: reduces ghosting on attacks.\n"
+          "Erase: protects attacks from the suppression mask.\n"
+          "Merge: keeps current transients dominant while transferring sustained identity.\n"
+          "Never fully shuts the effect off.",
           AfterimageAudioProcessorEditor::DockGroup::Spectral },
         { "RANDOM", afterimage::constants::idRandomRecall,
           "RANDOM\nSlow smoothed wander around Recall Position.",

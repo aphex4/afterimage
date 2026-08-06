@@ -1,6 +1,14 @@
-# AFTERIMAGE Effect Engine Retune
+# AFTERIMAGE Effect Engine
 
 Preserves STFT (2048/512), latency, phase strategy (current-frame phase), parameter IDs, and Influence=0 / Mix=0 / Bypass identity.
+
+## Product identities
+
+| Mode | Verb |
+|------|------|
+| **Shadow** | Add the past behind the present (unchanged additive ghost). |
+| **Erase** | Remove what the sound has repeated (familiarity envelope suppression). |
+| **Merge** | Impose the spectral identity of the past onto the present (envelope + landmarks). |
 
 ## Influence mapping
 
@@ -25,44 +33,76 @@ floors: Shadow 0.20 | Erase 0.15 | Merge 0.25
 effective = mappedInfluence * (1 - transient * preserve * 0.65)
 ```
 
-Max shutoff ~65% so attacks retain ≥~35% historical contribution.
-
-## Transient detector
-
-`transientStrength = clamp((flux/denom) * 3.2)` (was `* 4.0`).
-
-## Recalled energy normalisation
-
-Bounded makeup −6…+9 dB, smoothed; mode target ratios ~0.78 / 0.90 / 0.85 of current RMS. Silent history not amplified.
-
 ## Mode formulas
 
-**Shadow:** `out = current + normalizedHistory * mixAmount`  
-Energy policy: allow up to `mappedInfluence * 3 dB` rise; do not force input=output energy.
+### Shadow (bit-stable — do not retune casually)
 
-**Erase:** `ratio = hist/(cur+ε); overlap = ratio/(ratio+0.32); out = cur * (1 - min(mix*overlap, 0.92))`  
-No upward energy restore (soft floor only).
+```text
+out = current + normalizedHistory * mixAmount
+```
 
-**Merge:** log-magnitude morph with ±18 dB per-bin clamp; soft energy stabilise (±3 dB partial).
+Energy policy: allow up to `mappedInfluence * 3 dB` rise; do not force input=output energy.  
+Recalled spectra: bounded makeup −6…+9 dB, target ~0.78× current RMS.
 
-## Blur
+### Erase — familiarity envelope
 
-History-only box blur; after blur, RMS energy renormalised (0.5…2×) so Blur ≠ unintended attenuation. Blur=0 exact.
+Per-channel preallocated envelope `eraseFamiliarity[bin]`, updated from the recalled history frame each hop (unless Freeze):
 
-## Default parameter changes
+```text
+attack/release asymmetric one-pole toward historyMagnitude * ageSoft
+attackSec ≈ clamp(Memory * 0.025, 15–180 ms)
+releaseSec ≈ Memory * (0.40 + 0.60*(1 - Forget²))   // Forget accelerates fade
+```
 
-| Param | Was | Now | Notes |
-|-------|-----|-----|-------|
-| Recall | 45% | 40% | Saved sessions keep saved values |
-| Influence | 50% | 40% | |
-| Forget | 35% | 25% | |
-| Blur | 15% | 12% | |
-| Transient Preserve | 50% | 35% | |
+**Recall (Erase):** selects the historical age whose magnitudes feed the familiarity update.  
+**Memory:** persistence horizon (release time).  
+**Forget:** how quickly familiarity decays.  
+**Freeze:** stops envelope updates; continues applying the frozen stencil.
 
-## Factory presets
+Suppression (no upward energy restore):
 
-Retuned into Subtle / Medium / Extreme categories. Default program `Soft Shadow` is immediately demonstrative.
+```text
+famPresence = fam / (fam + knee)
+currentExcess = max(0, cur - fam) / (cur + fam + knee)
+mask = pow(famPresence * (1 - 0.90 * currentExcess), contrastExp)
+attenDb = -(14 + mappedInf * 20) * mixAmount * mask
+out = current * max(dbToGain(attenDb), softFloor)
+```
+
+Mask is spatially smoothed (base radius + Blur widening) and lightly smoothed across frames.  
+Blur widens erasure regions; it is not a loudness control.
+
+### Merge — envelope transfer + landmarks
+
+Current remains the carrier. History provides identity (not `current + history`).
+
+```text
+curEnv, histEnv = boxBlur(current / history, radius = 10 + BlurRadius)
+transferDb = clamp(histEnvDb - curEnvDb, ±(6 + mappedInf * 18))
+prominence = history / (histEnv + ε)
+landmarkDb = clamp(gainToDb(prominence), 0, 9) if prominence > 1.55 else 0
+out = current * dbToGain((transferDb + landmarkDb * 0.55) * mixAmount)
+```
+
+**Blur (Merge):** broadens the transferred envelope.  
+Soft energy stabilisation ±~2.5 dB. Current phase only (production default).
+
+## Blur (Shadow)
+
+History-only box blur with RMS energy renormalised (0.5…2×). Blur=0 exact.
 
 ## DebugAudition
 
-Compile with `-DAFTERIMAGE_DEBUG_AUDITION=1` (RecalledOnly) or `=2` (SpectralDelta). Not in release UI.
+Compile with `-DAFTERIMAGE_DEBUG_AUDITION=<n>` (not in release UI):
+
+| Value | Mode |
+|------:|------|
+| 0 | Normal |
+| 1 | RecalledOnly |
+| 2 | SpectralDelta |
+| 3 | EraseMask (audition removed material) |
+| 4 | MergeTransfer (audition imposed identity delta) |
+
+## Factory presets
+
+Erase/Merge presets retuned for familiarity carve and identity transfer (not louder Output). Shadow presets unchanged in intent.

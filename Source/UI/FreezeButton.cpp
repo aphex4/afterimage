@@ -7,7 +7,8 @@ FreezeButton::FreezeButton()
     setClickingTogglesState (true);
     setButtonText ("FREEZE");
     setTooltip ("FREEZE\n"
-                "Stops writing new spectral frames. Recalled memory stays locked.");
+                "Stops writing new spectral frames. Recalled memory stays locked.\n"
+                "Erase: also freezes the familiarity envelope (fixed spectral stencil).");
     setComponentID ("freeze");
     getProperties().set ("afterimageRole", roleId);
 }

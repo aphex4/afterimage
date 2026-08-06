@@ -18,14 +18,24 @@ constexpr float kModeAmountEpsilon = 1.0e-4f;
 constexpr float kEnergySmoothCoeff = 0.22f;
 constexpr float kHistMakeupSmoothCoeff = 0.18f;
 constexpr float kTransientSmoothCoeff = 0.35f;
-constexpr float kEraseMaxAtten = 0.92f;
-constexpr float kOverlapEpsilon = 1.0e-8f;
-constexpr float kEraseOverlapKnee = 0.32f;
-constexpr float kMergeDbEpsilon = 1.0e-8f;
-constexpr float kMergeRatioDbLimit = 18.0f;
 constexpr float kHistMakeupDbMax = 9.0f;
 constexpr float kHistAttenDbMax = 6.0f;
 constexpr float kSilenceEnergyThresh = 1.0e-10f;
+
+// Erase familiarity / suppression
+constexpr float kEraseFamiliarityKnee = 0.12f;
+constexpr float kEraseContrastExp = 1.25f;
+constexpr float kEraseMaskTemporalCoeff = 0.72f;
+constexpr float kEraseSoftFloorLin = 0.02f; // ~-34 dB soft floor
+constexpr int   kEraseMaskBaseRadius = 1;
+
+// Merge envelope / landmarks
+constexpr float kMergeDbEpsilon = 1.0e-8f;
+constexpr float kMergeLandmarkThresh = 1.55f;
+constexpr float kMergeLandmarkStrength = 0.55f;
+constexpr float kMergeMaxLandmarkDb = 9.0f;
+constexpr int   kMergeEnvBaseRadius = 10;
+constexpr int   kMergeLandmarkSmoothRadius = 2;
 
 #if defined (AFTERIMAGE_DEBUG_AUDITION)
 constexpr DebugAudition kDebugAudition = static_cast<DebugAudition> (AFTERIMAGE_DEBUG_AUDITION);
@@ -188,9 +198,21 @@ void SpectralModeProcessor::prepare (int numBins, double sampleRate, int numChan
     crossfadeScratch_.assign (static_cast<std::size_t> (numBins_), 0.0f);
     histNormScratch_.assign (static_cast<std::size_t> (numBins_), 0.0f);
 
+    eraseMaskScratch_.assign (static_cast<std::size_t> (numBins_), 0.0f);
+    eraseMaskSmoothScratch_.assign (static_cast<std::size_t> (numBins_), 0.0f);
+    mergeCurEnvScratch_.assign (static_cast<std::size_t> (numBins_), 0.0f);
+    mergeHistEnvScratch_.assign (static_cast<std::size_t> (numBins_), 0.0f);
+    mergeLandmarkScratch_.assign (static_cast<std::size_t> (numBins_), 0.0f);
+    mergeOutScratch_.assign (static_cast<std::size_t> (numBins_), 0.0f);
+
     energyScaleSmoothed_.assign (static_cast<std::size_t> (numChannels_), 1.0f);
     histMakeupSmoothed_.assign (static_cast<std::size_t> (numChannels_), 1.0f);
     transientSmoothed_.assign (static_cast<std::size_t> (numChannels_), 0.0f);
+
+    eraseFamiliarity_.assign (static_cast<std::size_t> (numChannels_),
+                              std::vector<float> (static_cast<std::size_t> (numBins_), 0.0f));
+    eraseMaskSmoothed_.assign (static_cast<std::size_t> (numChannels_),
+                               std::vector<float> (static_cast<std::size_t> (numBins_), 0.0f));
 
     reset();
 }
@@ -207,9 +229,25 @@ void SpectralModeProcessor::reset()
     std::fill (identityScratch_.begin(), identityScratch_.end(), 0.0f);
     std::fill (crossfadeScratch_.begin(), crossfadeScratch_.end(), 0.0f);
     std::fill (histNormScratch_.begin(), histNormScratch_.end(), 0.0f);
+    std::fill (eraseMaskScratch_.begin(), eraseMaskScratch_.end(), 0.0f);
+    std::fill (eraseMaskSmoothScratch_.begin(), eraseMaskSmoothScratch_.end(), 0.0f);
+    std::fill (mergeCurEnvScratch_.begin(), mergeCurEnvScratch_.end(), 0.0f);
+    std::fill (mergeHistEnvScratch_.begin(), mergeHistEnvScratch_.end(), 0.0f);
+    std::fill (mergeLandmarkScratch_.begin(), mergeLandmarkScratch_.end(), 0.0f);
+    std::fill (mergeOutScratch_.begin(), mergeOutScratch_.end(), 0.0f);
     std::fill (energyScaleSmoothed_.begin(), energyScaleSmoothed_.end(), 1.0f);
     std::fill (histMakeupSmoothed_.begin(), histMakeupSmoothed_.end(), 1.0f);
     std::fill (transientSmoothed_.begin(), transientSmoothed_.end(), 0.0f);
+
+    clearEraseMemory();
+}
+
+void SpectralModeProcessor::clearEraseMemory() noexcept
+{
+    for (auto& env : eraseFamiliarity_)
+        std::fill (env.begin(), env.end(), 0.0f);
+    for (auto& m : eraseMaskSmoothed_)
+        std::fill (m.begin(), m.end(), 0.0f);
 }
 
 void SpectralModeProcessor::setMode (SpectralMode mode) noexcept
@@ -236,6 +274,8 @@ void SpectralModeProcessor::ensureChannelState (int channelIndex) noexcept
     jassert (need <= energyScaleSmoothed_.size());
     jassert (need <= transientSmoothed_.size());
     jassert (need <= histMakeupSmoothed_.size());
+    jassert (need <= eraseFamiliarity_.size());
+    jassert (need <= eraseMaskSmoothed_.size());
     juce::ignoreUnused (need);
 }
 
@@ -246,6 +286,15 @@ float SpectralModeProcessor::getLastEnergyScale (int channelIndex) const noexcep
     const auto ch = static_cast<std::size_t> (
         juce::jlimit (0, static_cast<int> (energyScaleSmoothed_.size()) - 1, channelIndex));
     return energyScaleSmoothed_[ch];
+}
+
+const float* SpectralModeProcessor::getEraseFamiliarityEnvelope (int channelIndex) const noexcept
+{
+    if (eraseFamiliarity_.empty() || numBins_ <= 0)
+        return nullptr;
+    const auto ch = static_cast<std::size_t> (
+        juce::jlimit (0, static_cast<int> (eraseFamiliarity_.size()) - 1, channelIndex));
+    return eraseFamiliarity_[ch].data();
 }
 
 void SpectralModeProcessor::advanceModeCrossfade (int hopSamples) noexcept
@@ -356,8 +405,8 @@ const float* SpectralModeProcessor::normalizeHistoryEnergy (SpectralMode mode,
         switch (mode)
         {
             case SpectralMode::Shadow: targetRatio = 0.78f; break;
-            case SpectralMode::Erase:  targetRatio = 0.90f; break; // detection clarity
-            case SpectralMode::Merge:  targetRatio = 0.85f; break;
+            case SpectralMode::Erase:  targetRatio = 0.90f; break; // unused by Erase path
+            case SpectralMode::Merge:  targetRatio = 0.85f; break; // unused by Merge path
         }
 
         const float raw = static_cast<float> (std::sqrt ((curE * static_cast<double> (targetRatio)) / histE));
@@ -430,21 +479,21 @@ void SpectralModeProcessor::applyEnergyPolicy (SpectralMode mode,
             case SpectralMode::Erase:
             {
                 // Do not restore carved energy upward; soft-cap extreme drops only.
-                if (outOverIn < 0.15f)
-                    targetScale = 0.15f / outOverIn;
+                if (outOverIn < 0.12f)
+                    targetScale = 0.12f / outOverIn;
                 else
                     targetScale = 1.0f;
-                targetScale = juce::jlimit (1.0f, constants::dbToGain (3.0f), targetScale);
+                targetScale = juce::jlimit (1.0f, constants::dbToGain (2.0f), targetScale);
                 break;
             }
 
             case SpectralMode::Merge:
             {
-                // Keep morph audible but hold loudness near input (±~2 dB soft).
+                // Keep morph audible but hold loudness near input (±~2.5 dB soft).
                 const float raw = 1.0f / outOverIn;
-                const float db = juce::jlimit (-2.0f, 2.0f,
+                const float db = juce::jlimit (-2.5f, 2.5f,
                                                constants::gainToDb (std::max (raw, 1.0e-8f)));
-                targetScale = constants::dbToGain (db * 0.85f);
+                targetScale = constants::dbToGain (db * 0.80f);
                 break;
             }
         }
@@ -476,22 +525,260 @@ void SpectralModeProcessor::sanitizeMagnitudes (float* magnitudes, int numBins) 
     }
 }
 
-void SpectralModeProcessor::applyModeMagnitudes (SpectralMode mode,
-                                                 float* magnitudes,
-                                                 const float* historyMagnitudes,
-                                                 int numBins,
-                                                 const ModeParams& params,
-                                                 int channelIndex,
-                                                 bool updateSmoothers) noexcept
+//==============================================================================
+void SpectralModeProcessor::updateEraseFamiliarity (const float* historyMagnitudes,
+                                                    int numBins,
+                                                    const ModeParams& params,
+                                                    int channelIndex) noexcept
+{
+    ensureChannelState (channelIndex);
+    const auto ch = static_cast<std::size_t> (juce::jlimit (0, numChannels_ - 1, channelIndex));
+    auto& env = eraseFamiliarity_[ch];
+    if (static_cast<int> (env.size()) < numBins || historyMagnitudes == nullptr)
+        return;
+
+    // Memory Length ≈ persistence horizon; Forget accelerates release (fade of familiarity).
+    const float memSec = juce::jlimit (constants::memoryLengthMinSec,
+                                       constants::memoryLengthMaxSec,
+                                       params.memoryLengthSeconds);
+    const float forget = juce::jlimit (0.0f, 1.0f, params.forget);
+    const float hopSec = static_cast<float> (constants::hopSize)
+                         / static_cast<float> (std::max (1.0, sampleRate_));
+
+    // Fast attack (becomes familiar quickly), slow release scaled by Memory / Forget.
+    const float attackSec = juce::jlimit (0.015f, 0.18f, memSec * 0.025f);
+    const float releaseSec = juce::jlimit (0.12f, 8.0f,
+                                           memSec * (0.40f + 0.60f * (1.0f - forget * forget)));
+    const float attackCoeff = 1.0f - std::exp (-hopSec / attackSec);
+    const float releaseCoeff = 1.0f - std::exp (-hopSec / releaseSec);
+
+    // Recall age softens which historical lookback feeds familiarity (not mix depth).
+    const float ageW = remappedHistoryWeight (SpectralMode::Erase, params.recallAge01, 0.0f);
+
+    for (int i = 0; i < numBins; ++i)
+    {
+        const float target = historyMagnitudes[i] * (0.35f + 0.65f * ageW);
+        float& e = env[static_cast<std::size_t> (i)];
+        if (target > e)
+            e += attackCoeff * (target - e);
+        else
+            e += releaseCoeff * (target - e);
+        e = std::max (0.0f, e);
+        if (! std::isfinite (e))
+            e = 0.0f;
+    }
+}
+
+void SpectralModeProcessor::applyErasePath (float* magnitudes,
+                                            const float* historyMagnitudes,
+                                            int numBins,
+                                            const ModeParams& params,
+                                            int channelIndex,
+                                            bool updateSmoothers) noexcept
+{
+    if (magnitudes == nullptr || historyMagnitudes == nullptr || numBins <= 0)
+        return;
+
+    ensureChannelState (channelIndex);
+    const auto ch = static_cast<std::size_t> (juce::jlimit (0, numChannels_ - 1, channelIndex));
+
+    // Freeze: stop envelope updates; keep applying frozen familiarity stencil.
+    if (updateSmoothers && ! params.freeze)
+        updateEraseFamiliarity (historyMagnitudes, numBins, params, channelIndex);
+
+    const auto& familiarity = eraseFamiliarity_[ch];
+    if (static_cast<int> (familiarity.size()) < numBins)
+        return;
+
+    const float mixAmount = computeMixAmount (SpectralMode::Erase, params, channelIndex, updateSmoothers);
+    const float mappedInf = mapInfluenceForMode (SpectralMode::Erase, params.influence);
+
+    // Max carve depth scales with Influence (~14 dB mid → ~34 dB extreme on fully familiar).
+    const float maxEraseDb = 14.0f + mappedInf * 20.0f;
+
+    // Mask radius: base selective + Blur widens erasure regions.
+    const int blurExtra = blurRadiusFromAmount (params.blur, 28);
+    const int maskRadius = kEraseMaskBaseRadius + blurExtra;
+
+#if defined (AFTERIMAGE_DEBUG_AUDITION)
+    if (kDebugAudition == DebugAudition::RecalledOnly)
+    {
+        for (int i = 0; i < numBins; ++i)
+            magnitudes[i] = familiarity[static_cast<std::size_t> (i)];
+        sanitizeMagnitudes (magnitudes, numBins);
+        return;
+    }
+#else
+    juce::ignoreUnused (kDebugAudition);
+#endif
+
+    // Contrast-sensitive mask: suppress where familiarity is present unless current
+    // clearly exceeds the envelope (novel energy). Equal/repeated → deep carve.
+    for (int i = 0; i < numBins; ++i)
+    {
+        const float cur = magnitudes[i];
+        const float fam = familiarity[static_cast<std::size_t> (i)];
+        const float famPresence = fam / (fam + kEraseFamiliarityKnee);
+        const float currentExcess = std::max (0.0f, cur - fam) / (cur + fam + kEraseFamiliarityKnee);
+        const float raw = juce::jlimit (0.0f, 1.0f, famPresence * (1.0f - 0.90f * currentExcess));
+        eraseMaskScratch_[static_cast<std::size_t> (i)] = std::pow (raw, kEraseContrastExp);
+    }
+
+    // Spatial smooth of mask (separate from history blur).
+    boxBlurMagnitudes (eraseMaskScratch_.data(),
+                       eraseMaskSmoothScratch_.data(),
+                       numBins,
+                       maskRadius,
+                       prefixScratch_.data());
+
+    auto& maskTemporal = eraseMaskSmoothed_[ch];
+    double energyIn = 0.0;
+    double energyOut = 0.0;
+
+    for (int i = 0; i < numBins; ++i)
+    {
+        float mask = eraseMaskSmoothScratch_[static_cast<std::size_t> (i)];
+        if (updateSmoothers)
+        {
+            float& mt = maskTemporal[static_cast<std::size_t> (i)];
+            mt += (mask - mt) * kEraseMaskTemporalCoeff;
+            mask = mt;
+        }
+
+        const float cur = magnitudes[i];
+        const float attenDb = -maxEraseDb * mixAmount * juce::jlimit (0.0f, 1.0f, mask);
+        float gain = constants::dbToGain (attenDb);
+        gain = std::max (gain, kEraseSoftFloorLin);
+        float out = cur * gain;
+
+#if defined (AFTERIMAGE_DEBUG_AUDITION)
+        if (kDebugAudition == DebugAudition::EraseMask)
+            out = std::max (0.0f, cur - out); // material being removed
+        else if (kDebugAudition == DebugAudition::SpectralDelta)
+            out = std::abs (cur - out);
+#endif
+
+        magnitudes[i] = out;
+        energyIn += static_cast<double> (cur) * static_cast<double> (cur);
+        energyOut += static_cast<double> (out) * static_cast<double> (out);
+    }
+
+    applyEnergyPolicy (SpectralMode::Erase, magnitudes, numBins, energyIn, energyOut, mappedInf,
+                       channelIndex, updateSmoothers);
+    sanitizeMagnitudes (magnitudes, numBins);
+}
+
+void SpectralModeProcessor::applyMergePath (float* magnitudes,
+                                            const float* historyMagnitudes,
+                                            int numBins,
+                                            const ModeParams& params,
+                                            int channelIndex,
+                                            bool updateSmoothers) noexcept
+{
+    if (magnitudes == nullptr || historyMagnitudes == nullptr || numBins <= 0)
+        return;
+
+    ensureChannelState (channelIndex);
+
+    const float mixAmount = computeMixAmount (SpectralMode::Merge, params, channelIndex, updateSmoothers);
+    const float mappedInf = mapInfluenceForMode (SpectralMode::Merge, params.influence);
+
+    // Blur widens historical envelope transfer (broadness of identity).
+    const int envRadius = kMergeEnvBaseRadius + blurRadiusFromAmount (params.blur, 36);
+
+    boxBlurMagnitudes (magnitudes, mergeCurEnvScratch_.data(), numBins, envRadius, prefixScratch_.data());
+    boxBlurMagnitudes (historyMagnitudes, mergeHistEnvScratch_.data(), numBins, envRadius, prefixScratch_.data());
+
+#if defined (AFTERIMAGE_DEBUG_AUDITION)
+    if (kDebugAudition == DebugAudition::RecalledOnly)
+    {
+        for (int i = 0; i < numBins; ++i)
+            magnitudes[i] = historyMagnitudes[i];
+        sanitizeMagnitudes (magnitudes, numBins);
+        return;
+    }
+#else
+    juce::ignoreUnused (kDebugAudition);
+#endif
+
+    // Transfer clamp scales with Influence (±6 → ±24 dB).
+    const float transferLimitDb = 6.0f + mappedInf * 18.0f;
+
+    // Landmark prominence mask from history vs its envelope.
+    for (int i = 0; i < numBins; ++i)
+    {
+        const float hist = historyMagnitudes[i];
+        const float env = mergeHistEnvScratch_[static_cast<std::size_t> (i)] + kMergeDbEpsilon;
+        const float prominence = hist / env;
+        float landmarkDb = 0.0f;
+        if (prominence > kMergeLandmarkThresh)
+        {
+            landmarkDb = juce::jlimit (0.0f, kMergeMaxLandmarkDb,
+                                       constants::gainToDb (std::max (prominence, 1.0e-8f)));
+        }
+        mergeLandmarkScratch_[static_cast<std::size_t> (i)] = landmarkDb;
+    }
+
+    boxBlurMagnitudes (mergeLandmarkScratch_.data(),
+                       eraseMaskSmoothScratch_.data(), // reuse scratch
+                       numBins,
+                       kMergeLandmarkSmoothRadius,
+                       prefixScratch_.data());
+
+    double energyIn = 0.0;
+    double energyOut = 0.0;
+
+    for (int i = 0; i < numBins; ++i)
+    {
+        const float cur = magnitudes[i];
+        const float curEnv = mergeCurEnvScratch_[static_cast<std::size_t> (i)];
+        const float histEnv = mergeHistEnvScratch_[static_cast<std::size_t> (i)];
+
+        const float curDb = constants::gainToDb (curEnv + kMergeDbEpsilon);
+        const float histDb = constants::gainToDb (histEnv + kMergeDbEpsilon);
+        float transferDb = histDb - curDb;
+        transferDb = juce::jlimit (-transferLimitDb, transferLimitDb, transferDb);
+
+        const float landmarkDb = eraseMaskSmoothScratch_[static_cast<std::size_t> (i)]
+                                 * kMergeLandmarkStrength;
+
+        // Carrier = current; reshape with envelope transfer + selective landmarks.
+        const float totalDb = (transferDb + landmarkDb) * mixAmount;
+        float out = cur * constants::dbToGain (totalDb);
+
+#if defined (AFTERIMAGE_DEBUG_AUDITION)
+        if (kDebugAudition == DebugAudition::MergeTransfer)
+            out = cur * constants::dbToGain (std::abs (totalDb));
+        else if (kDebugAudition == DebugAudition::SpectralDelta)
+            out = std::abs (out - cur);
+#endif
+
+        magnitudes[i] = out;
+        energyIn += static_cast<double> (cur) * static_cast<double> (cur);
+        energyOut += static_cast<double> (out) * static_cast<double> (out);
+    }
+
+    applyEnergyPolicy (SpectralMode::Merge, magnitudes, numBins, energyIn, energyOut, mappedInf,
+                       channelIndex, updateSmoothers);
+    sanitizeMagnitudes (magnitudes, numBins);
+}
+
+void SpectralModeProcessor::applyShadowPath (float* magnitudes,
+                                             const float* historyMagnitudes,
+                                             int numBins,
+                                             const ModeParams& params,
+                                             int channelIndex,
+                                             bool updateSmoothers) noexcept
 {
     if (magnitudes == nullptr || historyMagnitudes == nullptr || numBins <= 0)
         return;
 
     const float* histSrc = prepareBlurredHistory (historyMagnitudes, numBins, params.blur);
-    histSrc = normalizeHistoryEnergy (mode, histSrc, magnitudes, numBins, channelIndex, updateSmoothers);
+    histSrc = normalizeHistoryEnergy (SpectralMode::Shadow, histSrc, magnitudes,
+                                      numBins, channelIndex, updateSmoothers);
 
-    const float mixAmount = computeMixAmount (mode, params, channelIndex, updateSmoothers);
-    const float mappedInf = mapInfluenceForMode (mode, params.influence);
+    const float mixAmount = computeMixAmount (SpectralMode::Shadow, params, channelIndex, updateSmoothers);
+    const float mappedInf = mapInfluenceForMode (SpectralMode::Shadow, params.influence);
 
 #if defined (AFTERIMAGE_DEBUG_AUDITION)
     if (kDebugAudition == DebugAudition::RecalledOnly)
@@ -508,72 +795,48 @@ void SpectralModeProcessor::applyModeMagnitudes (SpectralMode mode,
     double energyIn = 0.0;
     double energyOut = 0.0;
 
-    switch (mode)
+    for (int i = 0; i < numBins; ++i)
     {
-        case SpectralMode::Shadow:
-        {
-            for (int i = 0; i < numBins; ++i)
-            {
-                const float cur = magnitudes[i];
-                const float ghost = histSrc[i] * mixAmount;
-                const float out = cur + ghost;
-                magnitudes[i] = out;
-                energyIn += static_cast<double> (cur) * static_cast<double> (cur);
-                energyOut += static_cast<double> (out) * static_cast<double> (out);
-            }
-            break;
-        }
-
-        case SpectralMode::Erase:
-        {
-            for (int i = 0; i < numBins; ++i)
-            {
-                const float cur = magnitudes[i];
-                const float hist = histSrc[i];
-                // Sensitive overlap: ratio / (ratio + knee) reaches useful carve earlier.
-                const float ratio = hist / (cur + kOverlapEpsilon);
-                const float overlap = ratio / (ratio + kEraseOverlapKnee);
-                float atten = mixAmount * overlap;
-                atten = std::min (atten, kEraseMaxAtten);
-                const float out = cur * (1.0f - atten);
-                magnitudes[i] = out;
-                energyIn += static_cast<double> (cur) * static_cast<double> (cur);
-                energyOut += static_cast<double> (out) * static_cast<double> (out);
-            }
-            break;
-        }
-
-        case SpectralMode::Merge:
-        {
-            // Log-magnitude morph — more even perceptual spectral transfer.
-            for (int i = 0; i < numBins; ++i)
-            {
-                const float cur = magnitudes[i];
-                const float hist = histSrc[i];
-                const float curDb = constants::gainToDb (cur + kMergeDbEpsilon);
-                const float histDb = constants::gainToDb (hist + kMergeDbEpsilon);
-                float deltaDb = histDb - curDb;
-                deltaDb = juce::jlimit (-kMergeRatioDbLimit, kMergeRatioDbLimit, deltaDb);
-                const float outDb = curDb + deltaDb * mixAmount;
-                const float out = constants::dbToGain (outDb);
-                magnitudes[i] = out;
-                energyIn += static_cast<double> (cur) * static_cast<double> (cur);
-                energyOut += static_cast<double> (out) * static_cast<double> (out);
-            }
-            break;
-        }
+        const float cur = magnitudes[i];
+        const float ghost = histSrc[i] * mixAmount;
+        const float out = cur + ghost;
+        magnitudes[i] = out;
+        energyIn += static_cast<double> (cur) * static_cast<double> (cur);
+        energyOut += static_cast<double> (out) * static_cast<double> (out);
     }
 
 #if defined (AFTERIMAGE_DEBUG_AUDITION)
     if (kDebugAudition == DebugAudition::SpectralDelta)
     {
-        // Leave magnitudes as processed delta vs identity (already applied).
+        // Leave magnitudes as processed (Shadow delta vs identity already additive).
     }
 #endif
 
-    applyEnergyPolicy (mode, magnitudes, numBins, energyIn, energyOut, mappedInf,
+    applyEnergyPolicy (SpectralMode::Shadow, magnitudes, numBins, energyIn, energyOut, mappedInf,
                        channelIndex, updateSmoothers);
     sanitizeMagnitudes (magnitudes, numBins);
+}
+
+void SpectralModeProcessor::applyModeMagnitudes (SpectralMode mode,
+                                                 float* magnitudes,
+                                                 const float* historyMagnitudes,
+                                                 int numBins,
+                                                 const ModeParams& params,
+                                                 int channelIndex,
+                                                 bool updateSmoothers) noexcept
+{
+    switch (mode)
+    {
+        case SpectralMode::Shadow:
+            applyShadowPath (magnitudes, historyMagnitudes, numBins, params, channelIndex, updateSmoothers);
+            break;
+        case SpectralMode::Erase:
+            applyErasePath (magnitudes, historyMagnitudes, numBins, params, channelIndex, updateSmoothers);
+            break;
+        case SpectralMode::Merge:
+            applyMergePath (magnitudes, historyMagnitudes, numBins, params, channelIndex, updateSmoothers);
+            break;
+    }
 }
 
 void SpectralModeProcessor::applyShadowMagnitudes (float* magnitudes,
