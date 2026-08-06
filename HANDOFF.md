@@ -13,8 +13,7 @@ Local path (author machine): `~/dev/AFTERIMAGE`
 
 It does **not** use a normal delay or reverb as the core. It runs an **overlap-add STFT**, stores a circular buffer of **spectral frames** (magnitude/phase + metadata), and lets the live spectrum interact with its recent past.
 
-Planned modes: **Shadow**, **Erase**, **Merge** (later: Recall, Smear).  
-**Shadow, Erase, and Merge are implemented and audible.**
+Modes: **Shadow**, **Erase**, **Merge** — all implemented and audible. Random Recall wander and factory presets are shipped. Stereo Link is deferred.
 
 ---
 
@@ -27,11 +26,11 @@ Planned modes: **Shadow**, **Erase**, **Merge** (later: Recall, Smear).
 | 3 History | ✅ | Per-channel spectral history, Freeze, Memory Length window, fill UI indicator |
 | 4 Shadow | ✅ | Additive magnitude blend with interpolated history |
 | 5 Erase + Merge | ✅ | Suppression + morph + any-mode crossfade |
-| 6 Blur / Forget / Transients polish | Partial | Blur on history; Forget + transient used; Random unused |
+| 6 Blur / Forget / Transients / Random | ✅ | Blur on history; Forget + transient; Random = slow wander |
 | 7 Memory Well viz | ✅ | DSP-seeded circular particles + Recall ring |
-| 8 Presets / polish | ❌ | Factory presets, Stereo Link |
+| 8 Presets / polish | ✅ | ≥8 factory presets, tooltips; Stereo Link deferred |
 
-Current milestone line in README: **Phase 5 — Erase + Merge**.
+Current milestone line in README: **Phase 8 polish — first solid release**.
 
 ---
 
@@ -45,7 +44,7 @@ Input
          window → FFT
          capture SpectralFrame (mag/phase/rms/centroid/flux)
          READ history at Recall (interpolated) BEFORE pushing current
-         apply SpectralModeProcessor (Shadow now)
+         apply SpectralModeProcessor (Shadow / Erase / Merge)
          write magnitudes back to FFT (keep current phase; Hermitian mirror)
          PUSH unmodified analysis frame into history (unless Freeze)
          IFFT → synthesis window → WOLA
@@ -91,7 +90,11 @@ outMag             = currentMag * (1 - effectiveInfluence)
                    + historyMag * (effectiveInfluence * decayWeight)
 ```
 
-Then ±6 dB energy match vs pre-Shadow magnitude energy. Current **phase kept**. Random Recall = slow smoothed wander around Recall Position (not per-hop chaos).
+Then ±6 dB energy match vs pre-Shadow magnitude energy. Current **phase kept**.
+
+### Random Recall (implemented)
+
+Slow one-pole LPF on bipolar noise (~0.28 Hz), scaled by `randomRecall * maxDepth` (±0.35 age at 100%). Applied once per hop on channel 0; shared L/R `recallAge01`. Random = 0 → exact Recall Position.
 
 Erase / Merge: implemented (see §3b).
 
@@ -119,18 +122,20 @@ AFTERIMAGE/
 ├── CMakeLists.txt
 ├── README.md
 └── Source/
-    ├── PluginProcessor.*          # APVTS, processBlock, dry delay, soft clip, meters
-    ├── PluginEditor.*             # dark UI, knobs, mode selector, timer → Memory Pool
+    ├── PluginProcessor.*          # APVTS, processBlock, factory program API
+    ├── PluginEditor.*             # dark UI, knobs, presets combo, tooltips
     ├── DSP/
     │   ├── STFTProcessor.*        # rings, Hann, FFT/IFFT, WOLA, spectrum callback
-    │   ├── SpectralEngine.*       # history I/O, random recall, Shadow write-back
+    │   ├── SpectralEngine.*       # history I/O, random recall wander, mode write-back
     │   ├── SpectralHistoryBuffer.*
     │   ├── SpectralFrame.h
     │   ├── SpectralModes.*        # Shadow / Erase / Merge
     │   ├── DryWetMixer.h          # latency delay + equal-power mix helper
     │   └── ParameterSmoother.h
-    ├── UI/                        # LookAndFeel, MemoryPool, ModeSelector, SpectrumDisplay
-    └── Utilities/Constants.h
+    ├── UI/                        # LookAndFeel, MemoryWell, ModeSelector, SpectrumDisplay
+    └── Utilities/
+        ├── Constants.h
+        └── FactoryPresets.h       # ≥8 parameter-only factory presets
 ```
 
 Company / codes: `AdamAudio`, manufacturer `Adam`, plugin code `AfIm`.  
@@ -150,12 +155,14 @@ JUCE: local checkout preferred at `~/dev/Spawnclone/JUCE`, else FetchContent 8.0
 | `blur` | Blur | applied to history magnitudes |
 | `transientPreserve` | Transients | used in all modes |
 | `freeze` | Freeze | bool |
-| `randomRecall` | Random | unused |
+| `randomRecall` | Random | slow wander around Recall Position |
 | `outputGain` | Output | −24…+12 dB |
 | `mix` | Mix | equal-power, latency-aligned |
 | `bypass` | Bypass | smoothed |
 
 Smoothing lives in `ParameterSmoother` / processBlock. Mode crossfade ~80 ms in `SpectralModeProcessor`.
+
+Factory presets via `AudioProcessor` program API + UI combo (`FactoryPresets.h`). Loading a preset clears live history.
 
 ---
 
@@ -179,37 +186,40 @@ Smoothing lives in `ParameterSmoother` / processBlock. Mode crossfade ~80 ms in 
 cd ~/dev/AFTERIMAGE   # or clone the GitHub repo
 cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DJUCE_PATH=$HOME/dev/Spawnclone/JUCE
 cmake --build build --config Release -j
+ctest --test-dir build --output-on-failure
 ```
 
 Artefacts:
 
 - Standalone: `build/AFTERIMAGE_artefacts/Release/Standalone/AFTERIMAGE.app`  
 - VST3 (build): `build/AFTERIMAGE_artefacts/Release/VST3/AFTERIMAGE.vst3`  
-- VST3 (installed): `~/Library/Audio/Plug-Ins/VST3/AFTERIMAGE.vST3`  
+- VST3 (installed): `~/Library/Audio/Plug-Ins/VST3/AFTERIMAGE.vst3`  
 
-Manual check in Ableton Live 12: quit fully after rebuild so the binary reloads. Shadow: sustained pads/chords, Memory ~3 s, Influence 50–70%, Recall 40–60%, Mix 100%.
+Manual check in Ableton Live 12: quit fully after rebuild so the binary reloads. Shadow: sustained pads/chords, Memory ~3 s, Influence 50–70%, Recall 40–60%, Mix 100%. Random: raise Random and listen for slow recall drift (not stutter).
 
 ---
 
 ## 8. What to work on next (recommended)
 
-### Phase 6 — Random Recall + polish
+### Deferred — Stereo Link
 
-Wire Random Recall (slow smoothed wander around Recall Position). Polish Forget/transient mapping if needed.
+Independent L/R histories remain. Shared/averaged memory would need careful RT-safe design so it does not destabilize isolation or Influence≈0 identity. Prefer not shipping a half-baked link.
 
-### Phase 8
+### Optional polish
 
-≥8 factory presets (parameter values only), tooltips, Stereo Link, README polish.
+- User preset save slots (beyond factory programs)
+- Further Erase pumping review on percussion
+- Recall / Smear modes (product backlog)
 
 ---
 
 ## 9. Known pitfalls / design notes
 
 - **Push vs read order matters:** history is read *before* committing the current frame so age 0 is the previous hop, not “self.” History stores **pre-Shadow analysis**, not the wet ghost.  
-- **Stereo:** independent per-channel histories for now; Stereo Link parameter not exposed yet (architecture should allow shared/averaged memory later).  
+- **Stereo:** independent per-channel histories; Stereo Link deferred.  
 - **JUCE real-only FFT layout:** bins use interleaved `re/im` at `2*k`, `2*k+1` for `k = 0 … N/2`, with Hermitian mirror on write-back (same pattern as author’s CircleEQ).  
-- Branch name still says `phase-1-…` but contains Phases 1–4; don’t rename unless asked.  
-- Unit tests under `Tests/` are stubs and **not** in CMake yet.
+- Branch name still says `phase-1-…` but contains Phases 1–8 polish; don’t rename unless asked.  
+- Unit tests under `Tests/` are wired via CMake (`AFTERIMAGE_Tests` / ctest).
 
 ---
 
@@ -221,14 +231,8 @@ When responding:
 2. Prefer **surgical diffs** aligned with existing classes (`SpectralModeProcessor`, `SpectralEngine::onSpectrum`).  
 3. Call out RT-safety risks explicitly.  
 4. After suggesting code, list **files touched**, **how to build**, and **how to A/B listen** in a DAW.  
-5. Do not claim Random Recall / Stereo Link work unless implementing them.  
+5. Do not claim Stereo Link works unless implementing it.  
 6. If unsure about JUCE APIs, stick to patterns already in-tree (`juce::dsp::FFT`, APVTS, `SmoothedValue`).
-
-### Good first prompts for ChatGPT
-
-- “Wire Random Recall as a slow wander around Recall Position.”  
-- “Add factory presets for Shadow / Erase / Merge starting points.”  
-- “Review Erase attenuation for pumping on percussion.”
 
 ---
 
@@ -241,4 +245,4 @@ When responding:
 
 ---
 
-*End of handoff. Generated for AFTERIMAGE Phase 5 (Erase + Merge).*
+*End of handoff. AFTERIMAGE Phase 8 polish (Random + presets); Stereo Link deferred.*

@@ -42,6 +42,10 @@ namespace constants
     constexpr float  modeCrossfadeSec   = 0.08f;
     constexpr float  bypassSmoothSec    = 0.02f;
 
+    // Random Recall: slow LPF wander around Recall Position (not per-hop chaos)
+    constexpr float  randomRecallMaxDepth  = 0.35f;  // max |age| offset at Random = 100%
+    constexpr float  randomRecallCutoffHz  = 0.28f;  // wander bandwidth
+
     // -------------------------------------------------------------------------
     // UI
     // -------------------------------------------------------------------------

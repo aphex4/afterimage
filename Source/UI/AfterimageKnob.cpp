@@ -30,6 +30,13 @@ void AfterimageKnob::setValueText (const juce::String& text)
     valueLabel.setText (text, juce::dontSendNotification);
 }
 
+void AfterimageKnob::setTooltip (const juce::String& tip)
+{
+    slider.setTooltip (tip);
+    nameLabel.setTooltip (tip);
+    valueLabel.setTooltip (tip);
+}
+
 void AfterimageKnob::attachToParameter (juce::AudioProcessorValueTreeState& apvts, const juce::String& paramId)
 {
     attachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (

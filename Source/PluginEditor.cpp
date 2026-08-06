@@ -1,6 +1,35 @@
 #include "PluginEditor.h"
 #include "Utilities/Constants.h"
 
+namespace
+{
+struct DockSpec
+{
+    const char* name;
+    const char* id;
+    const char* tip;
+};
+
+const DockSpec kDockSpecs[] = {
+    { "MEMORY",    afterimage::constants::idMemoryLength,
+      "Memory Length — how far back the searchable spectral history extends (0.1–10 s)." },
+    { "INFLUENCE", afterimage::constants::idInfluence,
+      "Influence — strength of spectral interaction with recalled memory. 0% = transparent." },
+    { "FORGET",    afterimage::constants::idForget,
+      "Forget — how quickly older recalled frames lose weight." },
+    { "BLUR",      afterimage::constants::idBlur,
+      "Blur — smooth history magnitudes across neighboring frequency bins." },
+    { "TRANSIENT", afterimage::constants::idTransientPreserve,
+      "Transients — preserve attacks by reducing influence when transients are detected." },
+    { "RANDOM",    afterimage::constants::idRandomRecall,
+      "Random Recall — slow smoothed wander around Recall Position (not chaotic per-hop jumps)." },
+    { "MIX",       afterimage::constants::idMix,
+      "Mix — equal-power dry/wet blend (dry is latency-aligned with the STFT)." },
+    { "OUTPUT",    afterimage::constants::idOutputGain,
+      "Output — final gain trim after mix and bypass (−24…+12 dB)." },
+};
+} // namespace
+
 //==============================================================================
 AfterimageAudioProcessorEditor::AfterimageAudioProcessorEditor (AfterimageAudioProcessor& p)
     : AudioProcessorEditor (&p),
@@ -32,12 +61,17 @@ AfterimageAudioProcessorEditor::AfterimageAudioProcessorEditor (AfterimageAudioP
     cpuLabel.setJustificationType (juce::Justification::centredRight);
     addAndMakeVisible (cpuLabel);
 
+    buildPresetMenu();
+
     addAndMakeVisible (modeSelector);
     addAndMakeVisible (meterDisplay);
     addAndMakeVisible (memoryWell);
+    memoryWell.setTooltip ("Memory Well — scrub the Recall ring to choose history age (outer = newest).");
 
     freezeButton.setClickingTogglesState (true);
     bypassButton.setClickingTogglesState (true);
+    freezeButton.setTooltip ("Freeze — stop writing new spectral frames; keep recalling frozen memory.");
+    bypassButton.setTooltip ("Bypass — smoothed pass-through of latency-aligned dry signal.");
     addAndMakeVisible (freezeButton);
     addAndMakeVisible (bypassButton);
 
@@ -86,6 +120,23 @@ AfterimageAudioProcessorEditor::~AfterimageAudioProcessorEditor()
     setLookAndFeel (nullptr);
 }
 
+void AfterimageAudioProcessorEditor::buildPresetMenu()
+{
+    presetBox.setTextWhenNothingSelected ("Preset");
+    presetBox.setTooltip ("Factory presets — parameter starting points only (history is cleared on load).");
+    for (int i = 0; i < afterimage::factory::kNumPresets; ++i)
+        presetBox.addItem (afterimage::factory::kPresets[static_cast<std::size_t> (i)].name, i + 1);
+
+    presetBox.setSelectedId (audioProcessor.getCurrentProgram() + 1, juce::dontSendNotification);
+    presetBox.onChange = [this]
+    {
+        const int id = presetBox.getSelectedId();
+        if (id > 0)
+            audioProcessor.setCurrentProgram (id - 1);
+    };
+    addAndMakeVisible (presetBox);
+}
+
 void AfterimageAudioProcessorEditor::wireRecall()
 {
     if (auto* recallParam = audioProcessor.getAPVTS().getParameter (afterimage::constants::idRecallPosition))
@@ -122,23 +173,12 @@ void AfterimageAudioProcessorEditor::wireRecall()
 
 void AfterimageAudioProcessorEditor::buildDock()
 {
-    struct Spec { const char* name; const char* id; };
     // Recall lives on the Memory Well ring — not in the dock.
-    const Spec specs[] = {
-        { "MEMORY",    afterimage::constants::idMemoryLength },
-        { "INFLUENCE", afterimage::constants::idInfluence },
-        { "FORGET",    afterimage::constants::idForget },
-        { "BLUR",      afterimage::constants::idBlur },
-        { "TRANSIENT", afterimage::constants::idTransientPreserve },
-        { "RANDOM",    afterimage::constants::idRandomRecall },
-        { "MIX",       afterimage::constants::idMix },
-        { "OUTPUT",    afterimage::constants::idOutputGain },
-    };
-
-    for (const auto& spec : specs)
+    for (const auto& spec : kDockSpecs)
     {
         auto knob = std::make_unique<AfterimageKnob>();
         knob->setNameLabel (spec.name);
+        knob->setTooltip (spec.tip);
         knob->attachToParameter (audioProcessor.getAPVTS(), spec.id);
         addAndMakeVisible (*knob);
         knobs.push_back (std::move (knob));
@@ -173,7 +213,7 @@ void AfterimageAudioProcessorEditor::resized()
 
     // Header
     auto top = area.removeFromTop (58);
-    auto titleArea = top.removeFromLeft (300);
+    auto titleArea = top.removeFromLeft (260);
     titleLabel.setBounds (titleArea.removeFromTop (34));
     taglineLabel.setBounds (titleArea);
 
@@ -184,6 +224,8 @@ void AfterimageAudioProcessorEditor::resized()
     cpuLabel.setBounds (top.removeFromRight (64).reduced (0, 16));
     top.removeFromRight (12);
     modeSelector.setBounds (top.removeFromRight (292).reduced (0, 12));
+    top.removeFromRight (10);
+    presetBox.setBounds (top.removeFromRight (168).reduced (0, 14));
 
     // Bottom glass dock
     auto dock = area.removeFromBottom (128);
@@ -241,20 +283,14 @@ void AfterimageAudioProcessorEditor::timerCallback()
     const int activity = juce::roundToInt (snapCache_.historyFill * 100.0f);
     cpuLabel.setText ("MEM " + juce::String (activity) + "%", juce::dontSendNotification);
 
-    static constexpr const char* ids[] = {
-        afterimage::constants::idMemoryLength,
-        afterimage::constants::idInfluence,
-        afterimage::constants::idForget,
-        afterimage::constants::idBlur,
-        afterimage::constants::idTransientPreserve,
-        afterimage::constants::idRandomRecall,
-        afterimage::constants::idMix,
-        afterimage::constants::idOutputGain,
-    };
+    // Keep preset box in sync if host/program API changed selection
+    const int wantId = audioProcessor.getCurrentProgram() + 1;
+    if (presetBox.getSelectedId() != wantId)
+        presetBox.setSelectedId (wantId, juce::dontSendNotification);
 
-    for (size_t i = 0; i < knobs.size() && i < std::size (ids); ++i)
+    for (size_t i = 0; i < knobs.size() && i < std::size (kDockSpecs); ++i)
     {
-        if (auto* param = audioProcessor.getAPVTS().getParameter (ids[i]))
+        if (auto* param = audioProcessor.getAPVTS().getParameter (kDockSpecs[i].id))
             knobs[i]->setValueText (param->getCurrentValueAsText());
     }
 }

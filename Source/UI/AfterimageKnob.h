@@ -16,6 +16,7 @@ public:
 
     void setNameLabel (const juce::String& name);
     void setValueText (const juce::String& text);
+    void setTooltip (const juce::String& tip);
     void attachToParameter (juce::AudioProcessorValueTreeState& apvts, const juce::String& paramId);
 
     juce::Slider& getSlider() noexcept { return slider; }

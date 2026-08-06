@@ -14,6 +14,7 @@
     Angle = frequency, radius = age. Driven by DSP snapshot seeds.
 */
 class MemoryWellComponent : public juce::Component,
+                            public juce::SettableTooltipClient,
                             private juce::Timer
 {
 public:

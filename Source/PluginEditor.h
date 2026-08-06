@@ -6,6 +6,7 @@
 #include "UI/MemoryWellComponent.h"
 #include "UI/ModeSelector.h"
 #include "UI/SpectrumDisplay.h"
+#include "Utilities/FactoryPresets.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
@@ -25,13 +26,16 @@ private:
     void timerCallback() override;
     void buildDock();
     void wireRecall();
+    void buildPresetMenu();
 
     AfterimageAudioProcessor& audioProcessor;
     AfterimageLookAndFeel lookAndFeel;
+    juce::TooltipWindow tooltipWindow { this, 700 };
 
     juce::Label titleLabel;
     juce::Label taglineLabel;
     juce::Label cpuLabel;
+    juce::ComboBox presetBox;
 
     ModeSelector modeSelector;
     SpectrumDisplay meterDisplay;

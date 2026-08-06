@@ -8,6 +8,7 @@
 #include "DSP/DryWetMixer.h"
 #include "DSP/VisualizationAtomics.h"
 #include "Utilities/Constants.h"
+#include "Utilities/FactoryPresets.h"
 
 #include <atomic>
 #include <vector>
@@ -44,11 +45,11 @@ public:
     bool isMidiEffect() const override { return false; }
     double getTailLengthSeconds() const override { return 0.0; }
 
-    int getNumPrograms() override { return 1; }
-    int getCurrentProgram() override { return 0; }
-    void setCurrentProgram (int) override {}
-    const juce::String getProgramName (int) override { return {}; }
-    void changeProgramName (int, const juce::String&) override {}
+    int getNumPrograms() override;
+    int getCurrentProgram() override;
+    void setCurrentProgram (int index) override;
+    const juce::String getProgramName (int index) override;
+    void changeProgramName (int index, const juce::String& newName) override;
 
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
@@ -100,6 +101,8 @@ private:
     std::atomic<float>* pOutputGain = nullptr;
     std::atomic<float>* pMix = nullptr;
     std::atomic<float>* pBypass = nullptr;
+
+    int currentProgram_ = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AfterimageAudioProcessor)
 };

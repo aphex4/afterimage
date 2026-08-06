@@ -17,6 +17,19 @@ namespace afterimage
 {
 
 /**
+    Slow Random Recall wander: one-pole LPF on bipolar noise.
+
+    @param wanderOffset  smoothed state in [-1, 1] (mutated)
+    @param rng           xorshift state (mutated)
+    @return effective recall age in [0, 1]
+*/
+[[nodiscard]] float computeRandomRecallAge (float& wanderOffset,
+                                            std::uint32_t& rng,
+                                            float recallPosition,
+                                            float randomAmount,
+                                            float hopSeconds) noexcept;
+
+/**
     STFT + per-channel spectral history + Shadow mode.
 
     Audio-thread only for history mutation. UI reads VisualizationAtomics.
@@ -91,6 +104,10 @@ private:
     SpectralMode currentMode_ = SpectralMode::Shadow;
     float memoryLengthSeconds_ = constants::memoryLengthDefaultSec;
     std::uint32_t vizSequence_ = 0;
+
+    // Random Recall wander (audio-thread state; no alloc)
+    float wanderOffset_ = 0.0f;   // smoothed bipolar noise in [-1, 1]
+    std::uint32_t wanderRng_ = 0xA5F1C3E9u;
 
     bool freezeTarget_ = false;
     double sampleRate_ = 44100.0;

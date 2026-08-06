@@ -523,6 +523,65 @@ static void testPhaseWriteback()
 }
 
 //==============================================================================
+static void testRandomRecallWander()
+{
+    std::cout << "Random Recall wander...\n";
+
+    const float hopSec = static_cast<float> (constants::hopSize) / 48000.0f;
+    const float recall = 0.45f;
+
+    // Random = 0 → exact recall position (wander state may still advance internally)
+    {
+        float offset = 0.0f;
+        std::uint32_t rng = 0x12345678u;
+        for (int i = 0; i < 500; ++i)
+        {
+            const float age = computeRandomRecallAge (offset, rng, recall, 0.0f, hopSec);
+            CHECK_NEAR (age, recall, 1e-6);
+            CHECK (age >= 0.0f && age <= 1.0f);
+        }
+    }
+
+    // Random = 1 → ages stay in [0,1] and slowly vary (not stuck, not chaotic jumps)
+    {
+        float offset = 0.0f;
+        std::uint32_t rng = 0xC0FFEE01u;
+        float prev = computeRandomRecallAge (offset, rng, recall, 1.0f, hopSec);
+        float minAge = prev, maxAge = prev;
+        double hopDeltaSum = 0.0;
+        int hops = 0;
+
+        for (int i = 0; i < 2000; ++i)
+        {
+            const float age = computeRandomRecallAge (offset, rng, recall, 1.0f, hopSec);
+            CHECK (age >= 0.0f && age <= 1.0f);
+            CHECK (std::isfinite (age));
+            CHECK (std::abs (age - prev) < 0.08f); // slow: no per-hop chaos
+            hopDeltaSum += std::abs (age - prev);
+            ++hops;
+            minAge = std::min (minAge, age);
+            maxAge = std::max (maxAge, age);
+            prev = age;
+        }
+
+        CHECK (maxAge - minAge > 0.05f); // actually wanders over time
+        CHECK (hopDeltaSum / hops < 0.02); // average hop step is small
+        std::cout << "  wander span=" << (maxAge - minAge)
+                  << " meanHopDelta=" << (hopDeltaSum / hops) << "\n";
+    }
+
+    // Depth scales with random amount
+    {
+        float o0 = 0.5f, o1 = 0.5f;
+        std::uint32_t r0 = 1, r1 = 1;
+        // Same RNG seed / offset: smaller random → closer to centre
+        const float aLow = computeRandomRecallAge (o0, r0, 0.5f, 0.2f, hopSec);
+        const float aHigh = computeRandomRecallAge (o1, r1, 0.5f, 1.0f, hopSec);
+        CHECK (std::abs (aLow - 0.5f) <= std::abs (aHigh - 0.5f) + 1e-5f);
+    }
+}
+
+//==============================================================================
 static void testEngineInfluenceZeroAndFreeze()
 {
     std::cout << "Engine Influence0 / Freeze / stereo / blocks...\n";
@@ -869,6 +928,7 @@ int main()
     testPhaseWriteback();
     testFftLayout();
     testStftIdentity();
+    testRandomRecallWander();
     testEngineInfluenceZeroAndFreeze();
     testEngineShadowAudibleVsIdentity();
     testStereoIsolation();

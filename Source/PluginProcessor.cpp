@@ -249,6 +249,40 @@ afterimage::SpectralMode AfterimageAudioProcessor::getCurrentMode() const noexce
     }
 }
 
+int AfterimageAudioProcessor::getNumPrograms()
+{
+    return afterimage::factory::kNumPresets;
+}
+
+int AfterimageAudioProcessor::getCurrentProgram()
+{
+    return currentProgram_;
+}
+
+void AfterimageAudioProcessor::setCurrentProgram (int index)
+{
+    if (index < 0 || index >= afterimage::factory::kNumPresets)
+        return;
+
+    currentProgram_ = index;
+    afterimage::factory::applyPreset (apvts, index);
+    engine.requestClearHistory(); // never carry spectral history across presets
+    updateParameterTargets();
+}
+
+const juce::String AfterimageAudioProcessor::getProgramName (int index)
+{
+    if (index < 0 || index >= afterimage::factory::kNumPresets)
+        return {};
+
+    return afterimage::factory::kPresets[static_cast<std::size_t> (index)].name;
+}
+
+void AfterimageAudioProcessor::changeProgramName (int, const juce::String&)
+{
+    // Factory presets are fixed.
+}
+
 void AfterimageAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     if (auto xml = apvts.copyState().createXml())

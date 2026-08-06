@@ -4,6 +4,34 @@
 
 namespace afterimage
 {
+namespace
+{
+/** xorshift32 — RT-safe, no alloc, returns [0, 1). */
+inline float nextUnitRandom (std::uint32_t& state) noexcept
+{
+    state ^= state << 13;
+    state ^= state >> 17;
+    state ^= state << 5;
+    return static_cast<float> (state & 0x00FFFFFFu) * (1.0f / 16777216.0f);
+}
+} // namespace
+
+float computeRandomRecallAge (float& wanderOffset,
+                              std::uint32_t& rng,
+                              float recallPosition,
+                              float randomAmount,
+                              float hopSeconds) noexcept
+{
+    const float noise = nextUnitRandom (rng) * 2.0f - 1.0f;
+    const float cutoff = constants::randomRecallCutoffHz;
+    const float coeff = 1.0f - std::exp (-2.0f * juce::MathConstants<float>::pi
+                                         * cutoff * juce::jmax (1.0e-6f, hopSeconds));
+    wanderOffset += (noise - wanderOffset) * coeff;
+    wanderOffset = juce::jlimit (-1.0f, 1.0f, wanderOffset);
+
+    const float depth = juce::jlimit (0.0f, 1.0f, randomAmount) * constants::randomRecallMaxDepth;
+    return juce::jlimit (0.0f, 1.0f, recallPosition + wanderOffset * depth);
+}
 
 void SpectralEngine::prepare (double sampleRate, int maxBlockSize, int numChannels)
 {
@@ -55,6 +83,9 @@ void SpectralEngine::reset()
         std::fill (prev.begin(), prev.end(), 0.0f);
 
     std::fill (hasPreviousFrame_.begin(), hasPreviousFrame_.end(), false);
+
+    wanderOffset_ = 0.0f;
+    wanderRng_ = 0xA5F1C3E9u;
 }
 
 void SpectralEngine::releaseResources()
@@ -221,8 +252,14 @@ void SpectralEngine::onSpectrum (float* interleavedFftData, int fftSize, int cha
     if (channelIndex == 0)
     {
         hopParams_ = frameSmoothers_.snapSpectralParamsForHop (stft_.getHopSize(), freezeTarget_);
-        hopParams_.recallAge01 = juce::jlimit (0.0f, 1.0f, hopParams_.recallPosition);
-        // Random Recall intentionally unused (Phase 6).
+
+        const float hopSec = static_cast<float> (stft_.getHopSize())
+                             / static_cast<float> (juce::jmax (1.0, sampleRate_));
+        hopParams_.recallAge01 = computeRandomRecallAge (wanderOffset_,
+                                                         wanderRng_,
+                                                         hopParams_.recallPosition,
+                                                         hopParams_.randomRecall,
+                                                         hopSec);
     }
 
     auto& hist = *histories_[static_cast<std::size_t> (channelIndex)];

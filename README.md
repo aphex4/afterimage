@@ -4,34 +4,35 @@
 
 AFTERIMAGE is a real-time spectral memory processor. It continuously analyzes and stores a short history of the signal’s spectral content so the present can interact with its own recent past — producing evolving spectral echoes, ghost harmonics, frequency suppression, and morphing textures.
 
-> **Current milestone: Phase 5 — Erase + Merge**  
-> Shadow, Erase, and Merge are audible. Memory Well UI drives recall. STFT identity and mode tests covered.
+> **Current milestone: Phase 8 polish — first solid release**  
+> Shadow / Erase / Merge, Random Recall wander, factory presets, Memory Well, and validation tests.
 
 ---
 
-## Current features (Phase 5)
+## Features
 
 - Overlap-add STFT with host latency + latency-compensated dry/wet
 - Per-channel spectral history with Freeze and Memory Length
 - **Shadow** — additive spectral ghost of recalled memory
 - **Erase** — carve holes where memory overlaps the present
 - **Merge** — morph the present toward recalled memory
+- **Random Recall** — slow smoothed wander around Recall Position
+- Factory presets (parameter values only; history cleared on load)
 - Shared controls: Recall (ring), Forget, Blur (history only), Transient Preserve, Influence, Mix, Output
 - ~80 ms click-free crossfade when switching modes
 - Memory Well particle visualization (DSP-seeded)
+
 ---
 
-## DSP overview (planned)
+## DSP overview
 
 | Stage | Role |
 |-------|------|
 | STFT (FFT 2048 / hop 512 / Hann) | Analysis & resynthesis |
 | Spectral history buffer | Circular store of magnitude/phase frames (0.1–10 s) |
-| Modes | Shadow, Erase, Merge (+ Recall / Smear later) |
-| Blur / Forget / Transients | Frequency smoothing, age weighting, attack preservation |
+| Modes | Shadow, Erase, Merge |
+| Blur / Forget / Transients / Random | History smoothing, age weighting, attack preservation, recall wander |
 | Dry/wet | Latency-compensated equal-power mix |
-
-Phase 1 prepares these modules but does not insert them into the audio path.
 
 ---
 
@@ -73,17 +74,32 @@ cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
 
 # Build
 cmake --build build --config Release -j
+
+# Validation tests
+ctest --test-dir build --output-on-failure
+```
+
+### Debug build
+
+```bash
+cmake -B build-debug -S . -DCMAKE_BUILD_TYPE=Debug -DJUCE_PATH=$HOME/dev/Spawnclone/JUCE
+cmake --build build-debug --config Debug -j
+ctest --test-dir build-debug --output-on-failure
 ```
 
 ### Standalone
 
-After a successful build, run:
+After a successful **Release** build:
 
 ```bash
 open build/AFTERIMAGE_artefacts/Release/Standalone/AFTERIMAGE.app
 ```
 
-(Exact artefact path may vary slightly with generator; check `build/AFTERIMAGE_artefacts`.)
+After a **Debug** build:
+
+```bash
+open build-debug/AFTERIMAGE_artefacts/Debug/Standalone/AFTERIMAGE.app
+```
 
 ### VST3 output location
 
@@ -93,7 +109,7 @@ With `COPY_PLUGIN_AFTER_BUILD` enabled, the VST3 is copied to the user plug-in f
 ~/Library/Audio/Plug-Ins/VST3/AFTERIMAGE.vst3
 ```
 
-Build tree copy:
+Build tree copy (Release):
 
 ```text
 build/AFTERIMAGE_artefacts/Release/VST3/AFTERIMAGE.vst3
@@ -112,19 +128,19 @@ build/AFTERIMAGE_artefacts/Release/VST3/AFTERIMAGE.vst3
 | Forget | 0–100% | How quickly older frames lose weight |
 | Blur | 0–100% | Inter-bin smoothing of **history** magnitudes |
 | Transients | 0–100% | Attack preservation |
-| Random | 0–100% | Controlled recall wander (not wired yet) |
+| Random | 0–100% | Slow smoothed wander around Recall Position |
 | Freeze | on/off | Stop writing new history frames |
 | Mix | 0–100% | Equal-power dry/wet |
 | Output | −24…+12 dB | Output gain |
 | Bypass | on/off | Smoothed host-friendly bypass |
+| Preset | factory list | Applies parameter values only; clears live history |
 
 ---
 
-## Known limitations (Phase 5)
+## Known limitations
 
-- Random Recall parameter exists but is unused
-- Stereo Link is fixed independent per-channel histories
-- Factory presets not yet included
+- **Stereo Link** deferred — L/R keep independent spectral histories
+- Session/preset state stores parameters only (never live spectral history)
 
 ---
 
@@ -134,10 +150,10 @@ build/AFTERIMAGE_artefacts/Release/VST3/AFTERIMAGE.vst3
 2. **Phase 2** — STFT engine ✅
 3. **Phase 3** — Spectral history buffer integration ✅
 4. **Phase 4** — Shadow mode ✅
-5. **Phase 5** — Erase + Merge + mode crossfade ← *current*
-6. **Phase 6** — Forget / transient polish, Random Recall
-7. **Phase 7** — Memory Well polish (largely done)
-8. **Phase 8** — Presets and polish
+5. **Phase 5** — Erase + Merge + mode crossfade ✅
+6. **Phase 6** — Random Recall ✅
+7. **Phase 7** — Memory Well ✅
+8. **Phase 8** — Factory presets + polish ✅ (Stereo Link deferred)
 
 ---
 
