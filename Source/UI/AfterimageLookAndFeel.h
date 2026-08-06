@@ -60,9 +60,10 @@ public:
     static juce::Colour tooltipEdge()    { return juce::Colour (0x668a9bb5); }
 
 private:
-    static constexpr int kTooltipMaxWidth = 280;
-    static constexpr int kTooltipPadX = 12;
-    static constexpr int kTooltipPadY = 10;
+    static constexpr int kTooltipMaxWidth = 300;
+    static constexpr int kTooltipPadX = 16;
+    static constexpr int kTooltipPadY = 14;
+    static constexpr int kTooltipTitleBodyGap = 6;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AfterimageLookAndFeel)
 };

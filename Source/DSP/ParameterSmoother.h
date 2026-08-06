@@ -17,6 +17,8 @@ struct ParameterSmoother
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear>         mix;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> outputGain;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear>         bypassAmount;
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear>         gainMatchAmount;
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> gainMatchMakeup;
 
     // Frame-smoothed (engine advances by hopSize samples per FFT frame)
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> influence;
@@ -36,6 +38,12 @@ struct ParameterSmoother
 
         outputGain.reset (sampleRate, constants::gainSmoothSec);
         outputGain.setCurrentAndTargetValue (1.0f);
+
+        gainMatchAmount.reset (sampleRate, constants::gainMatchSmoothSec);
+        gainMatchAmount.setCurrentAndTargetValue (0.0f);
+
+        gainMatchMakeup.reset (sampleRate, constants::gainMatchMakeupSec);
+        gainMatchMakeup.setCurrentAndTargetValue (1.0f);
     }
 
     void prepareFrameSmoothers (double sampleRate)

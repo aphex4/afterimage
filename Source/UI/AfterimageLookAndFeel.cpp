@@ -1,6 +1,8 @@
 #include "AfterimageLookAndFeel.h"
 #include "AfterimageFonts.h"
 
+#include <cmath>
+
 AfterimageLookAndFeel::AfterimageLookAndFeel()
 {
     setColour (juce::ResizableWindow::backgroundColourId, background());
@@ -118,7 +120,9 @@ juce::Rectangle<int> AfterimageLookAndFeel::getTooltipBounds (const juce::String
         juce::GlyphArrangement ga;
         ga.addLineOfText (titleFont, title, 0.0f, 0.0f);
         textW = juce::jmax (textW, juce::roundToInt (ga.getBoundingBox (0, -1, true).getWidth()));
-        textH += juce::roundToInt (titleFont.getHeight()) + 4;
+        textH += juce::roundToInt (std::ceil (titleFont.getHeight()));
+        if (body.isNotEmpty())
+            textH += kTooltipTitleBodyGap;
     }
 
     if (body.isNotEmpty())
@@ -128,11 +132,12 @@ juce::Rectangle<int> AfterimageLookAndFeel::getTooltipBounds (const juce::String
         as.append (body, bodyFont, textPrimary().withAlpha (0.88f));
         juce::TextLayout layout;
         layout.createLayout (as, (float) maxTextW);
-        textW = juce::jmax (textW, juce::jmin (maxTextW, juce::roundToInt (layout.getWidth())));
-        textH += juce::roundToInt (layout.getHeight());
+        textW = juce::jmax (textW, juce::jmin (maxTextW, juce::roundToInt (std::ceil (layout.getWidth()))));
+        // Ceil + 1px slack so last line never sits on the border.
+        textH += juce::roundToInt (std::ceil (layout.getHeight())) + 1;
     }
 
-    const int w = juce::jlimit (120, kTooltipMaxWidth, textW + kTooltipPadX * 2);
+    const int w = juce::jlimit (128, kTooltipMaxWidth, textW + kTooltipPadX * 2);
     const int h = textH + kTooltipPadY * 2;
 
     int x = screenPos.x + 14;
@@ -158,6 +163,7 @@ void AfterimageLookAndFeel::drawTooltip (juce::Graphics& g, const juce::String& 
     g.setColour (tooltipEdge());
     g.drawRoundedRectangle (bounds.reduced (0.5f), 8.0f, 1.0f);
 
+    // Inset past the 1px stroke so text never touches the edge.
     auto inner = bounds.reduced ((float) kTooltipPadX, (float) kTooltipPadY);
 
     juce::String title, body;
@@ -174,12 +180,13 @@ void AfterimageLookAndFeel::drawTooltip (juce::Graphics& g, const juce::String& 
 
     if (title.isNotEmpty())
     {
+        const float titleH = AfterimageFonts::height (AfterimageFontRole::TooltipTitle);
         g.setFont (AfterimageFonts::get (AfterimageFontRole::TooltipTitle));
         g.setColour (accentCyan().withAlpha (0.9f));
-        g.drawText (title, inner.removeFromTop (AfterimageFonts::height (AfterimageFontRole::TooltipTitle) + 2.0f)
-                                   .toNearestInt(),
+        g.drawText (title, inner.removeFromTop (titleH).toNearestInt(),
                     juce::Justification::centredLeft, false);
-        inner.removeFromTop (2.0f);
+        if (body.isNotEmpty())
+            inner.removeFromTop ((float) kTooltipTitleBodyGap);
     }
 
     if (body.isNotEmpty())

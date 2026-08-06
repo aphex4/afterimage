@@ -21,10 +21,11 @@
     AFTERIMAGE spectral memory processor (Shadow / Erase / Merge).
 
     Routing (documented):
-      1) latency-aligned dry + wet (identity STFT)
-      2) equal-power dry/wet mix
-      3) bypass crossfade (toward latency-aligned dry)
-      4) final output gain  ← applied AFTER bypass so it always trims the audible output
+      1) latency-aligned dry + wet (identity STFT + spectral modes)
+      2) optional Gain Match wet makeup (dry/wet RMS, +/-12 dB, smoothed)
+      3) equal-power dry/wet mix
+      4) bypass crossfade (toward latency-aligned dry)
+      5) final output gain  ← applied AFTER bypass so it always trims the audible output
 
     Host callbacks larger than maxInternalBlockSize are processed in fixed chunks
     using preallocated scratch (no audio-thread allocation).
@@ -109,6 +110,13 @@ private:
     std::atomic<float>* pOutputGain = nullptr;
     std::atomic<float>* pMix = nullptr;
     std::atomic<float>* pBypass = nullptr;
+    std::atomic<float>* pGainMatch = nullptr;
+
+    // Gain Match RMS envelopes (audio thread only; prepared once)
+    float gainMatchDryRms_ = 0.0f;
+    float gainMatchWetRms_ = 0.0f;
+    float gainMatchMakeupTarget_ = 1.0f;
+    float gainMatchRmsCoeff_ = 0.0f;
 
     int currentProgram_ = 0;
 

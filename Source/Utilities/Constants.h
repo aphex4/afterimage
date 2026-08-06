@@ -41,6 +41,11 @@ namespace constants
     constexpr float  randomSmoothSec    = 0.15f;
     constexpr float  modeCrossfadeSec   = 0.08f;
     constexpr float  bypassSmoothSec    = 0.02f;
+    constexpr float  gainMatchSmoothSec = 0.05f;   // enable/disable crossfade
+    constexpr float  gainMatchMakeupSec = 0.12f;   // makeup gain smoothing
+    constexpr float  gainMatchRmsTauSec = 0.08f;   // dry/wet RMS envelope
+    constexpr float  gainMatchMaxDb     = 12.0f;   // makeup clamp +/-
+    constexpr float  gainMatchHystDb    = 0.35f;   // ignore tiny RMS ratio changes
 
     // Random Recall: slow LPF wander around Recall Position (not per-hop chaos)
     constexpr float  randomRecallMaxDepth  = 0.35f;  // max |age| offset at Random = 100%
@@ -72,6 +77,8 @@ namespace constants
     inline constexpr const char* idOutputGain        = "outputGain";
     inline constexpr const char* idMix               = "mix";
     inline constexpr const char* idBypass            = "bypass";
+    // New optional bool (default off). Old sessions without this ID load fine via APVTS.
+    inline constexpr const char* idGainMatch         = "gainMatch";
 
     inline float dbToGain (float db) noexcept
     {

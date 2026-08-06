@@ -37,6 +37,7 @@ AfterimageAudioProcessor::AfterimageAudioProcessor()
     pOutputGain = bind (idOutputGain);
     pMix = bind (idMix);
     pBypass = bind (idBypass);
+    pGainMatch = bind (idGainMatch);
 
 #if defined (AFTERIMAGE_ENABLE_LICENSING)
     licenseManager_.initialise();
@@ -96,6 +97,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout AfterimageAudioProcessor::cr
         juce::AudioParameterFloatAttributes().withStringFromValueFunction (percentText)));
     params.push_back (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { idBypass, 1 }, "Bypass", false));
+    // gainMatch: new ID (default off). Absent from older session XML — APVTS keeps default.
+    params.push_back (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { idGainMatch, 1 }, "Gain Match", false));
 
     return { params.begin(), params.end() };
 }
@@ -122,6 +126,14 @@ void AfterimageAudioProcessor::prepareToPlay (double sampleRate, int samplesPerB
     smoothers.mix.setCurrentAndTargetValue (smoothers.mix.getTargetValue());
     smoothers.outputGain.setCurrentAndTargetValue (smoothers.outputGain.getTargetValue());
     smoothers.bypassAmount.setCurrentAndTargetValue (smoothers.bypassAmount.getTargetValue());
+    smoothers.gainMatchAmount.setCurrentAndTargetValue (smoothers.gainMatchAmount.getTargetValue());
+    smoothers.gainMatchMakeup.setCurrentAndTargetValue (1.0f);
+
+    const double sr = juce::jmax (1.0, sampleRate);
+    gainMatchRmsCoeff_ = 1.0f - std::exp (-1.0f / (float) (sr * (double) gainMatchRmsTauSec));
+    gainMatchDryRms_ = 0.0f;
+    gainMatchWetRms_ = 0.0f;
+    gainMatchMakeupTarget_ = 1.0f;
 
 #if defined (AFTERIMAGE_ENABLE_LICENSING)
     entitlementDryAmount_.reset (sampleRate, 0.05);
@@ -157,6 +169,7 @@ void AfterimageAudioProcessor::updateParameterTargets()
     smoothers.mix.setTargetValue (pMix->load());
     smoothers.outputGain.setTargetValue (dbToGain (pOutputGain->load()));
     smoothers.bypassAmount.setTargetValue (pBypass->load() > 0.5f ? 1.0f : 0.0f);
+    smoothers.gainMatchAmount.setTargetValue (pGainMatch->load() > 0.5f ? 1.0f : 0.0f);
 
     engine.setActiveMemoryLengthSeconds (pMemoryLength->load());
     engine.setMode (getCurrentMode());
@@ -198,12 +211,50 @@ void AfterimageAudioProcessor::processChunk (juce::AudioBuffer<float>& wetChunk,
     // Latency-aligned dry
     dryWetMixer.processDryDelay (dryInChunk, delayedDryChunk);
 
+    // Gain Match: measure dry vs wet RMS, update smoothed makeup target (post-mode, pre-mix).
+    {
+        double dryAcc = 0.0, wetAcc = 0.0;
+        const int n = numSamples * juce::jmax (1, numChannels);
+        for (int ch = 0; ch < numChannels; ++ch)
+        {
+            const float* d = delayedDryChunk.getReadPointer (ch);
+            const float* w = wetChunk.getReadPointer (ch);
+            for (int i = 0; i < numSamples; ++i)
+            {
+                dryAcc += (double) d[i] * (double) d[i];
+                wetAcc += (double) w[i] * (double) w[i];
+            }
+        }
+
+        const float dryRms = std::sqrt ((float) (dryAcc / (double) juce::jmax (1, n)));
+        const float wetRms = std::sqrt ((float) (wetAcc / (double) juce::jmax (1, n)));
+        const float c = gainMatchRmsCoeff_;
+        gainMatchDryRms_ += c * (dryRms - gainMatchDryRms_);
+        gainMatchWetRms_ += c * (wetRms - gainMatchWetRms_);
+
+        constexpr float kFloor = 1.0e-5f;
+        const float ratio = gainMatchDryRms_ / juce::jmax (kFloor, gainMatchWetRms_);
+        const float makeupDb = juce::jlimit (-gainMatchMaxDb, gainMatchMaxDb, gainToDb (ratio));
+        const float newTarget = dbToGain (makeupDb);
+        const float curDb = gainToDb (gainMatchMakeupTarget_);
+        if (std::abs (makeupDb - curDb) >= gainMatchHystDb
+            || pGainMatch->load() <= 0.5f)
+        {
+            // Snap toward identity when disabled so re-enable starts clean.
+            gainMatchMakeupTarget_ = (pGainMatch->load() > 0.5f) ? newTarget : 1.0f;
+        }
+        smoothers.gainMatchMakeup.setTargetValue (gainMatchMakeupTarget_);
+    }
+
     // Mix → bypass → entitlement dry → output gain (final trim after bypass)
     for (int i = 0; i < numSamples; ++i)
     {
         const float mix = smoothers.mix.getNextValue();
         const float bypass = smoothers.bypassAmount.getNextValue();
         const float gain = smoothers.outputGain.getNextValue();
+        const float matchAmt = smoothers.gainMatchAmount.getNextValue();
+        const float makeup = smoothers.gainMatchMakeup.getNextValue();
+        const float wetScale = 1.0f + matchAmt * (makeup - 1.0f);
 #if defined (AFTERIMAGE_ENABLE_LICENSING)
         const float entitlementDry = entitlementDryAmount_.getNextValue();
 #else
@@ -216,7 +267,7 @@ void AfterimageAudioProcessor::processChunk (juce::AudioBuffer<float>& wetChunk,
         for (int ch = 0; ch < numChannels; ++ch)
         {
             const float dry = delayedDryChunk.getSample (ch, i);
-            const float wet = wetChunk.getSample (ch, i);
+            const float wet = wetChunk.getSample (ch, i) * wetScale;
             float mixed = dry * dryGain + wet * wetGain;
             mixed = mixed * (1.0f - bypass) + dry * bypass;
             mixed = mixed * (1.0f - entitlementDry) + dry * entitlementDry;

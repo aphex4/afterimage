@@ -119,6 +119,7 @@ inline void applyPreset (juce::AudioProcessorValueTreeState& apvts, int index) n
     setFloatParam (apvts, constants::idOutputGain, pr.outputGainDb);
     setFloatParam (apvts, constants::idMix, pr.mix);
     setBoolParam (apvts, constants::idBypass, false);
+    setBoolParam (apvts, constants::idGainMatch, false);
 }
 
 } // namespace factory

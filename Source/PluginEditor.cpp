@@ -11,13 +11,13 @@ const AfterimageAudioProcessorEditor::DockItem* dockItems()
         { "MEMORY", afterimage::constants::idMemoryLength,
           "MEMORY\n"
           "How far back searchable spectral history extends (0.1 to 10 s).\n"
-          "Erase: persistence horizon of the familiarity envelope.\n"
+          "Erase: familiarity envelope horizon.\n"
           "Merge/Shadow: active recall window length.",
           AfterimageAudioProcessorEditor::DockGroup::Memory },
         { "FORGET", afterimage::constants::idForget,
           "FORGET\n"
           "Shadow/Merge: how quickly older recalled frames lose weight.\n"
-          "Erase: how quickly familiarity fades from the erasure memory.",
+          "Erase: how quickly familiarity fades from erasure memory.",
           AfterimageAudioProcessorEditor::DockGroup::Memory },
         { "INFLUENCE", afterimage::constants::idInfluence,
           "INFLUENCE\n"
@@ -95,10 +95,13 @@ AfterimageAudioProcessorEditor::AfterimageAudioProcessorEditor (AfterimageAudioP
     addAndMakeVisible (memoryWell);
 
     addAndMakeVisible (freezeButton);
+    addAndMakeVisible (gainMatchButton);
     addAndMakeVisible (bypassButton);
 
     freezeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
         audioProcessor.getAPVTS(), afterimage::constants::idFreeze, freezeButton);
+    gainMatchAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
+        audioProcessor.getAPVTS(), afterimage::constants::idGainMatch, gainMatchButton);
     bypassAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
         audioProcessor.getAPVTS(), afterimage::constants::idBypass, bypassButton);
 
@@ -237,7 +240,6 @@ void AfterimageAudioProcessorEditor::resized()
     const int margin = juce::jmax (12, juce::roundToInt (18.0f * scale));
     const int headerH = juce::jmax (44, juce::roundToInt (50.0f * scale));
     const int dockH = juce::jmax (110, juce::roundToInt (124.0f * scale));
-    const int freezeH = juce::jmax (56, juce::roundToInt (68.0f * scale));
 
     auto area = getLocalBounds().reduced (margin);
 
@@ -276,15 +278,21 @@ void AfterimageAudioProcessorEditor::resized()
 
     // Dock
     auto dock = area.removeFromBottom (dockH);
-    area.removeFromBottom (juce::roundToInt (4.0f * scale));
     dockBounds_ = dock.toFloat();
     auto dockInner = dock.reduced (juce::roundToInt (14.0f * scale), juce::roundToInt (8.0f * scale));
 
-    // Freeze under well
-    auto freezeRow = area.removeFromBottom (freezeH);
-    const int freezeSize = juce::jmin (freezeRow.getHeight(), juce::roundToInt (68.0f * scale));
-    freezeButton.setBounds (freezeRow.withSizeKeepingCentre (freezeSize, freezeSize));
-    area.removeFromBottom (2);
+    // MATCH + FREEZE evenly spaced between Memory Well and dock
+    const int controlSize = juce::jmin (juce::roundToInt (68.0f * scale),
+                                        juce::jmax (52, area.getHeight() / 5));
+    const int sideGap = juce::jmax (14, juce::roundToInt (18.0f * scale));
+    const int controlBandH = controlSize + sideGap * 2;
+    auto controlBand = area.removeFromBottom (controlBandH);
+    const int pairGap = juce::jmax (14, juce::roundToInt (18.0f * scale));
+    const int pairW = controlSize * 2 + pairGap;
+    auto pair = controlBand.withSizeKeepingCentre (pairW, controlSize);
+    gainMatchButton.setBounds (pair.removeFromLeft (controlSize));
+    pair.removeFromLeft (pairGap);
+    freezeButton.setBounds (pair.removeFromLeft (controlSize));
 
     memoryWell.setBounds (area);
 

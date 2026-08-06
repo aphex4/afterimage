@@ -9,9 +9,9 @@ ModeSelector::ModeSelector()
     setWantsKeyboardFocus (true);
     setMouseCursor (juce::MouseCursor::PointingHandCursor);
     setTooltip ("MODE\n"
-                "SHADOW — Adds recalled harmonics behind the current sound.\n"
-                "ERASE — Removes spectral material the sound has repeated.\n"
-                "MERGE — Transfers the recalled sound's spectral identity onto the present.");
+                "SHADOW - Adds recalled harmonics behind the current sound.\n"
+                "ERASE - Removes spectral material the sound has repeated.\n"
+                "MERGE - Transfers recalled spectral identity onto the present.");
     startTimerHz (60);
 }
 

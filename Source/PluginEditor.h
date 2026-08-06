@@ -5,6 +5,7 @@
 #include "UI/AfterimageLookAndFeel.h"
 #include "UI/BypassButton.h"
 #include "UI/FreezeButton.h"
+#include "UI/GainMatchButton.h"
 #include "UI/MemoryWellComponent.h"
 #include "UI/ModeSelector.h"
 #include "UI/SpectrumDisplay.h"
@@ -64,6 +65,7 @@ private:
     MemoryWellComponent memoryWell;
 
     FreezeButton freezeButton;
+    GainMatchButton gainMatchButton;
     BypassButton bypassButton;
 
     std::vector<std::unique_ptr<AfterimageKnob>> knobs;
@@ -71,6 +73,7 @@ private:
     std::array<juce::Rectangle<float>, 2> dockDividers_ {};
 
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> freezeAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> gainMatchAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> bypassAttachment;
     std::unique_ptr<juce::ParameterAttachment> modeParamAttachment;
     std::unique_ptr<juce::ParameterAttachment> recallParamAttachment;

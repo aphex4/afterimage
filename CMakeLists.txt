@@ -95,6 +95,7 @@ set(AFTERIMAGE_PLUGIN_SOURCES
     Source/UI/AfterimageKnob.cpp
     Source/UI/BypassButton.cpp
     Source/UI/FreezeButton.cpp
+    Source/UI/GainMatchButton.cpp
     Source/UI/MemoryWellComponent.cpp
     Source/UI/SpectrumDisplay.cpp
     Source/UI/ModeSelector.cpp
