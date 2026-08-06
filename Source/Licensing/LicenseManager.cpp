@@ -267,7 +267,8 @@ void LicenseManager::recomputeStatusUnlocked()
     }
 
     status_ = LicenseStatus::Trial;
-    statusMessage_ = "Trial — " + juce::String (trialDaysRemaining_) + " day"
+    // ASCII hyphen only (em/en dashes mojibake in some hosts / font paths).
+    statusMessage_ = "Trial - " + juce::String (trialDaysRemaining_) + " day"
                      + (trialDaysRemaining_ == 1 ? "" : "s") + " left";
     entitlement_.store (EntitlementState::FullProcessing, std::memory_order_release);
 }

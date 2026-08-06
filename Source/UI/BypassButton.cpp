@@ -14,10 +14,15 @@ BypassButton::BypassButton()
 
 void BypassButton::paintButton (juce::Graphics& g, bool highlighted, bool down)
 {
-    auto bounds = getLocalBounds().toFloat().reduced (1.0f);
+    auto bounds = getLocalBounds();
+    constexpr int labelH = 15;
+    const auto labelArea = bounds.removeFromBottom (labelH);
+    auto iconArea = bounds.toFloat().reduced (3.0f, 2.0f);
+
     const bool bypassed = getToggleState();
-    const float r = juce::jmin (bounds.getWidth(), bounds.getHeight()) * 0.42f;
-    const auto c = bounds.getCentre().translated (0.0f, -4.0f);
+    // Keep the power glyph inside the icon strip so it never cuts the label.
+    const float r = juce::jmin (iconArea.getWidth(), iconArea.getHeight()) * 0.34f;
+    const auto c = iconArea.getCentre();
 
     // Power glyph: arc + stem
     juce::Path power;
@@ -37,6 +42,6 @@ void BypassButton::paintButton (juce::Graphics& g, bool highlighted, bool down)
     g.setColour (bypassed ? AfterimageLookAndFeel::accentWarm()
                           : AfterimageLookAndFeel::textMuted());
     g.drawFittedText (bypassed ? "BYPASSED" : "POWER",
-                      getLocalBounds().removeFromBottom (16),
+                      labelArea,
                       juce::Justification::centred, 1);
 }

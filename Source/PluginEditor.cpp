@@ -64,12 +64,12 @@ AfterimageAudioProcessorEditor::AfterimageAudioProcessorEditor (AfterimageAudioP
     addAndMakeVisible (*licensePanel);
 #endif
 
-    memoryStatusLabel.setText ("MEMORY 0%", juce::dontSendNotification);
+    memoryStatusLabel.setText ("FILL 0%", juce::dontSendNotification);
     memoryStatusLabel.setFont (AfterimageFonts::get (AfterimageFontRole::Status));
     memoryStatusLabel.setColour (juce::Label::textColourId, AfterimageLookAndFeel::textMuted());
-    memoryStatusLabel.setJustificationType (juce::Justification::centredRight);
-    memoryStatusLabel.setInterceptsMouseClicks (false, false);
-    memoryStatusLabel.setTooltip ("MEMORY\nHow full the spectral history buffer currently is.");
+    memoryStatusLabel.setJustificationType (juce::Justification::centredLeft);
+    // Keep mouse hits so the fill tooltip can show (not a meter label).
+    memoryStatusLabel.setTooltip ("FILL\nHow full the spectral memory buffer is.");
     addAndMakeVisible (memoryStatusLabel);
 
     buildPresetMenu();
@@ -225,7 +225,8 @@ void AfterimageAudioProcessorEditor::resized()
 
     auto area = getLocalBounds().reduced (margin);
 
-    // Header: wordmark | license | preset | modes | status | meters | bypass
+    // Header: wordmark | license | fill | preset | modes | meters | bypass
+    // Fill sits with title/license (spectral buffer fullness), not beside level meters.
     auto top = area.removeFromTop (headerH);
     const int titleW = juce::jlimit (140, 220, W / 5);
     titleLabel.setBounds (top.removeFromLeft (titleW).reduced (0, juce::roundToInt (6.0f * scale)));
@@ -239,15 +240,17 @@ void AfterimageAudioProcessorEditor::resized()
     }
 #endif
 
+    top.removeFromLeft (10);
+    memoryStatusLabel.setBounds (top.removeFromLeft (juce::jmax (68, juce::roundToInt (76.0f * scale)))
+                                      .reduced (0, juce::roundToInt (14.0f * scale)));
+    top.removeFromLeft (10);
+
     const int bypassW = juce::jmax (52, juce::roundToInt (58.0f * scale));
     bypassButton.setBounds (top.removeFromRight (bypassW).reduced (2, juce::roundToInt (6.0f * scale)));
-    top.removeFromRight (6);
+    top.removeFromRight (10);
     meterDisplay.setBounds (top.removeFromRight (juce::roundToInt (48.0f * scale))
                                 .reduced (0, juce::roundToInt (8.0f * scale)));
-    top.removeFromRight (6);
-    memoryStatusLabel.setBounds (top.removeFromRight (juce::jmax (72, juce::roundToInt (88.0f * scale)))
-                                      .reduced (0, juce::roundToInt (14.0f * scale)));
-    top.removeFromRight (8);
+    top.removeFromRight (12);
 
     const int modeW = juce::jlimit (180, 280, top.getWidth() - 150);
     modeSelector.setBounds (top.removeFromRight (modeW).reduced (0, juce::roundToInt (10.0f * scale)));
@@ -320,7 +323,7 @@ void AfterimageAudioProcessorEditor::timerCallback()
     }
 
     const int activity = juce::roundToInt (snapCache_.historyFill * 100.0f);
-    const juce::String memText = "MEMORY " + juce::String (activity) + "%";
+    const juce::String memText = "FILL " + juce::String (activity) + "%";
     if (memText != cachedMemoryStatus_)
     {
         cachedMemoryStatus_ = memText;
