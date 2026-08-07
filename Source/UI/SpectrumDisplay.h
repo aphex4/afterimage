@@ -8,12 +8,15 @@
     Intentionally level bars (not a full FFT spectrum view). Peak levels are
     published from the processor via VisualizationAtomics.
 */
-class SpectrumDisplay : public juce::Component
+class SpectrumDisplay : public juce::Component,
+                        public juce::SettableTooltipClient
 {
 public:
-    SpectrumDisplay() = default;
+    SpectrumDisplay();
 
     void paint (juce::Graphics& g) override;
+    void mouseMove (const juce::MouseEvent& e) override;
+    void mouseExit (const juce::MouseEvent& e) override;
 
     void setLevels (float inputLevel, float outputLevel)
     {
@@ -23,6 +26,8 @@ public:
     }
 
 private:
+    void updateTooltipForPosition (juce::Point<float> p);
+
     float inputLevel_ = 0.0f;
     float outputLevel_ = 0.0f;
 

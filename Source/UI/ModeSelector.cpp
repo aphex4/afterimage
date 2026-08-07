@@ -1,6 +1,7 @@
 #include "ModeSelector.h"
 #include "AfterimageFonts.h"
 #include "AfterimageLookAndFeel.h"
+#include "AfterimageTooltips.h"
 
 #include <cmath>
 
@@ -8,10 +9,7 @@ ModeSelector::ModeSelector()
 {
     setWantsKeyboardFocus (true);
     setMouseCursor (juce::MouseCursor::PointingHandCursor);
-    setTooltip ("MODE\n"
-                "SHADOW - Adds recalled harmonics behind the current sound.\n"
-                "ERASE - Removes spectral material the sound has repeated.\n"
-                "MERGE - Transfers recalled spectral identity onto the present.");
+    setTooltip (afterimage::tooltips::shadow);
     startTimerHz (60);
 }
 
@@ -49,6 +47,8 @@ afterimage::SpectralMode ModeSelector::modeAt (juce::Point<float> p) const noexc
 void ModeSelector::setMode (afterimage::SpectralMode mode)
 {
     currentMode_ = mode;
+    if (hoverIndex_ < 0)
+        setTooltip (afterimage::tooltips::modeFor (mode));
     repaint();
 }
 
@@ -76,6 +76,7 @@ void ModeSelector::mouseMove (const juce::MouseEvent& e)
     if (h != hoverIndex_)
     {
         hoverIndex_ = h;
+        setTooltip (afterimage::tooltips::modeFor (static_cast<afterimage::SpectralMode> (h)));
         repaint();
     }
 }
@@ -83,6 +84,7 @@ void ModeSelector::mouseMove (const juce::MouseEvent& e)
 void ModeSelector::mouseExit (const juce::MouseEvent&)
 {
     hoverIndex_ = -1;
+    setTooltip (afterimage::tooltips::modeFor (currentMode_));
     repaint();
 }
 
@@ -92,6 +94,7 @@ void ModeSelector::mouseDown (const juce::MouseEvent& e)
     if (mode == currentMode_)
         return;
     currentMode_ = mode;
+    setTooltip (afterimage::tooltips::modeFor (mode));
     if (onModeChanged)
         onModeChanged (mode);
     repaint();
@@ -111,6 +114,7 @@ bool ModeSelector::keyPressed (const juce::KeyPress& key)
     if (mode != currentMode_)
     {
         currentMode_ = mode;
+        setTooltip (afterimage::tooltips::modeFor (mode));
         if (onModeChanged)
             onModeChanged (mode);
         repaint();

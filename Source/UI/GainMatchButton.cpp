@@ -1,15 +1,13 @@
 #include "GainMatchButton.h"
 #include "AfterimageFonts.h"
 #include "AfterimageLookAndFeel.h"
+#include "AfterimageTooltips.h"
 
 GainMatchButton::GainMatchButton()
 {
     setClickingTogglesState (true);
     setButtonText ("MATCH");
-    setTooltip ("GAIN MATCH\n"
-                "Matches the completed processed blend to the latency-aligned dry "
-                "level using slow broadband correction. It does not change the Mix balance.\n"
-                "Bypass still passes dry unaltered.");
+    setTooltip (afterimage::tooltips::gainMatch);
     setComponentID ("gainMatch");
     getProperties().set ("afterimageRole", roleId);
 }

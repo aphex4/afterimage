@@ -1,13 +1,13 @@
 #include "BypassButton.h"
 #include "AfterimageFonts.h"
 #include "AfterimageLookAndFeel.h"
+#include "AfterimageTooltips.h"
 
 BypassButton::BypassButton()
 {
     setClickingTogglesState (true);
     setButtonText ("BYPASS");
-    setTooltip ("BYPASS\n"
-                "Smoothed pass-through of the latency-aligned dry signal.");
+    setTooltip (afterimage::tooltips::bypass);
     setComponentID ("bypass");
     getProperties().set ("afterimageRole", roleId);
 }

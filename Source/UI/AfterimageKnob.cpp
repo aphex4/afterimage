@@ -1,6 +1,7 @@
 #include "AfterimageKnob.h"
 #include "AfterimageFonts.h"
 #include "AfterimageLookAndFeel.h"
+#include "AfterimageTooltips.h"
 
 AfterimageKnob::AfterimageKnob()
 {
@@ -38,6 +39,19 @@ void AfterimageKnob::setValueText (const juce::String& text)
 
 void AfterimageKnob::setTooltip (const juce::String& tip)
 {
+    enabledTooltip_ = tip;
+    applyActiveTooltip();
+}
+
+void AfterimageKnob::enablementChanged()
+{
+    applyActiveTooltip();
+}
+
+void AfterimageKnob::applyActiveTooltip()
+{
+    const juce::String tip = isEnabled() ? enabledTooltip_
+                                         : juce::String (afterimage::tooltips::unavailable);
     SettableTooltipClient::setTooltip (tip);
     slider.setTooltip (tip);
 }

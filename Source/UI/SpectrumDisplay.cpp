@@ -1,5 +1,29 @@
 #include "SpectrumDisplay.h"
 #include "AfterimageLookAndFeel.h"
+#include "AfterimageTooltips.h"
+
+SpectrumDisplay::SpectrumDisplay()
+{
+    setTooltip (afterimage::tooltips::inputMeter);
+}
+
+void SpectrumDisplay::updateTooltipForPosition (juce::Point<float> p)
+{
+    const auto bounds = getLocalBounds().toFloat();
+    const bool overOutput = p.x >= bounds.getCentreX();
+    setTooltip (overOutput ? afterimage::tooltips::outputMeter
+                           : afterimage::tooltips::inputMeter);
+}
+
+void SpectrumDisplay::mouseMove (const juce::MouseEvent& e)
+{
+    updateTooltipForPosition (e.position);
+}
+
+void SpectrumDisplay::mouseExit (const juce::MouseEvent&)
+{
+    setTooltip (afterimage::tooltips::inputMeter);
+}
 
 void SpectrumDisplay::paint (juce::Graphics& g)
 {

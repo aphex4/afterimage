@@ -1,5 +1,6 @@
 #include "PluginEditor.h"
 #include "UI/AfterimageFonts.h"
+#include "UI/AfterimageTooltips.h"
 #include "Utilities/Constants.h"
 
 namespace
@@ -7,51 +8,37 @@ namespace
 const AfterimageAudioProcessorEditor::DockItem* dockItems()
 {
     // Tips use ASCII only (no em/en dashes, no smart quotes).
+    // Influence tip is mode-dynamic; placeholder here is replaced in buildDock / mode updates.
     static const AfterimageAudioProcessorEditor::DockItem items[] = {
         { "MEMORY", afterimage::constants::idMemoryLength,
-          "MEMORY\n"
-          "How far back searchable spectral history extends (0.1 to 10 s).\n"
-          "Erase: familiarity envelope horizon.\n"
-          "Merge/Shadow: active recall window length.",
+          afterimage::tooltips::memory,
           AfterimageAudioProcessorEditor::DockGroup::Memory },
         { "FORGET", afterimage::constants::idForget,
-          "FORGET\n"
-          "Shadow/Merge: how quickly older recalled frames lose weight.\n"
-          "Erase: how quickly familiarity fades from erasure memory.",
+          afterimage::tooltips::forget,
           AfterimageAudioProcessorEditor::DockGroup::Memory },
         { "INFLUENCE", afterimage::constants::idInfluence,
-          "INFLUENCE\n"
-          "Shadow: ghost amount.\n"
-          "Erase: depth of familiar-content suppression.\n"
-          "Merge: strength of spectral identity transfer.\n"
-          "0% is transparent.",
+          afterimage::tooltips::influenceShadow,
           AfterimageAudioProcessorEditor::DockGroup::Spectral },
         { "BLUR", afterimage::constants::idBlur,
-          "BLUR\n"
-          "Shadow: smooths recalled magnitudes across bins.\n"
-          "Erase: widens erasure regions.\n"
-          "Merge: broadens historical envelope transfer.",
+          afterimage::tooltips::blur,
           AfterimageAudioProcessorEditor::DockGroup::Spectral },
         { "TRANSIENT", afterimage::constants::idTransientPreserve,
-          "TRANSIENT\n"
-          "Shadow: reduces ghosting on attacks.\n"
-          "Erase: protects attacks from the suppression mask.\n"
-          "Merge: keeps current transients dominant while transferring sustained identity.\n"
-          "Never fully shuts the effect off.",
+          afterimage::tooltips::transientPreserve,
           AfterimageAudioProcessorEditor::DockGroup::Spectral },
         { "RANDOM", afterimage::constants::idRandomRecall,
-          "RANDOM\nSlow smoothed wander around Recall Position.",
+          afterimage::tooltips::random,
           AfterimageAudioProcessorEditor::DockGroup::Spectral },
         { "MIX", afterimage::constants::idMix,
-          "MIX\nEqual-power dry/wet blend. Dry is latency-aligned with the STFT.",
+          afterimage::tooltips::mix,
           AfterimageAudioProcessorEditor::DockGroup::Output },
         { "OUTPUT", afterimage::constants::idOutputGain,
-          "OUTPUT\nFinal gain trim after mix and bypass (-24 to +12 dB).",
+          afterimage::tooltips::output,
           AfterimageAudioProcessorEditor::DockGroup::Output },
     };
     return items;
 }
 
+constexpr int kInfluenceKnobIndex = 2;
 constexpr int kDockCount = 8;
 } // namespace
 
@@ -72,7 +59,7 @@ AfterimageAudioProcessorEditor::AfterimageAudioProcessorEditor (AfterimageAudioP
     titleLabel.setFont (AfterimageFonts::get (AfterimageFontRole::Wordmark));
     titleLabel.setColour (juce::Label::textColourId, AfterimageLookAndFeel::textPrimary());
     titleLabel.setJustificationType (juce::Justification::centredLeft);
-    titleLabel.setInterceptsMouseClicks (false, false);
+    titleLabel.setTooltip (afterimage::tooltips::afterimage);
     addAndMakeVisible (titleLabel);
 
 #if defined (AFTERIMAGE_ENABLE_LICENSING)
@@ -85,7 +72,7 @@ AfterimageAudioProcessorEditor::AfterimageAudioProcessorEditor (AfterimageAudioP
     memoryStatusLabel.setColour (juce::Label::textColourId, AfterimageLookAndFeel::textMuted());
     memoryStatusLabel.setJustificationType (juce::Justification::centredLeft);
     // Keep mouse hits so the fill tooltip can show (not a meter label).
-    memoryStatusLabel.setTooltip ("FILL\nHow full the spectral memory buffer is.");
+    memoryStatusLabel.setTooltip (afterimage::tooltips::memoryStatus);
     addAndMakeVisible (memoryStatusLabel);
 
     buildPresetMenu();
@@ -117,15 +104,18 @@ AfterimageAudioProcessorEditor::AfterimageAudioProcessorEditor (AfterimageAudioP
                 if (index == 2) mode = afterimage::SpectralMode::Merge;
                 modeSelector.setMode (mode);
                 memoryWell.setMode (mode);
+                updateInfluenceTooltip (mode);
             },
             nullptr);
 
         modeParamAttachment->sendInitialUpdate();
+        updateInfluenceTooltip (modeSelector.getMode());
 
         modeSelector.onModeChanged = [this] (afterimage::SpectralMode mode)
         {
             modeParamAttachment->setValueAsCompleteGesture (static_cast<float> (static_cast<int> (mode)));
             memoryWell.setMode (mode);
+            updateInfluenceTooltip (mode);
         };
     }
 
@@ -144,7 +134,7 @@ AfterimageAudioProcessorEditor::~AfterimageAudioProcessorEditor()
 void AfterimageAudioProcessorEditor::buildPresetMenu()
 {
     presetBox.setTextWhenNothingSelected ("Custom");
-    presetBox.setTooltip ("PRESET\nFactory starting points. Parameters only; history clears on load.");
+    presetBox.setTooltip (afterimage::tooltips::preset);
     for (int i = 0; i < afterimage::factory::kNumPresets; ++i)
         presetBox.addItem (afterimage::factory::kPresets[static_cast<std::size_t> (i)].name, i + 1);
 
@@ -204,6 +194,15 @@ void AfterimageAudioProcessorEditor::buildDock()
         addAndMakeVisible (*knob);
         knobs.push_back (std::move (knob));
     }
+
+    updateInfluenceTooltip (modeSelector.getMode());
+}
+
+void AfterimageAudioProcessorEditor::updateInfluenceTooltip (afterimage::SpectralMode mode)
+{
+    if (knobs.size() <= (size_t) kInfluenceKnobIndex)
+        return;
+    knobs[(size_t) kInfluenceKnobIndex]->setTooltip (afterimage::tooltips::influenceForMode (mode));
 }
 
 void AfterimageAudioProcessorEditor::paint (juce::Graphics& g)
@@ -385,16 +384,6 @@ void AfterimageAudioProcessorEditor::timerCallback()
             knobs[i]->setValueText (param->getCurrentValueAsText());
     }
 
-    // Subtle MATCH correction readout in tooltip when enabled.
-    if (gainMatchButton.getToggleState())
-    {
-        const float db = audioProcessor.getGainMatchCorrectionDb();
-        gainMatchButton.setTooltip (
-            "GAIN MATCH\n"
-            "Matches the completed processed blend to the latency-aligned dry "
-            "level using slow broadband correction. It does not change the Mix balance.\n"
-            "MATCH " + juce::String (db, 1) + " dB");
-    }
 }
 
 juce::AudioProcessorEditor* AfterimageAudioProcessor::createEditor()

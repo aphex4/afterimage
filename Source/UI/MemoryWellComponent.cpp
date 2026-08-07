@@ -1,6 +1,7 @@
 #include "MemoryWellComponent.h"
 #include "AfterimageFonts.h"
 #include "AfterimageLookAndFeel.h"
+#include "AfterimageTooltips.h"
 
 #include <cmath>
 
@@ -18,10 +19,7 @@ MemoryWellComponent::MemoryWellComponent()
 {
     setOpaque (false);
     setWantsKeyboardFocus (true);
-    setTooltip ("RECALL RING\n"
-                "Click or drag in the well to set memory age (outer = newest).\n"
-                "Shadow/Merge: historical spectrum in use.\n"
-                "Erase: age region that updates the familiarity envelope.");
+    setTooltip (afterimage::tooltips::memoryWell);
     startTimerHz (60);
 }
 
@@ -201,8 +199,13 @@ void MemoryWellComponent::mouseMove (const juce::MouseEvent& e)
     const auto c = wellCentre();
     const float d = c.getDistanceFrom (e.position);
     const float ringR = recallRingRadius();
-    const bool near = hitTestsWell (e.position)
-                      && (std::abs (d - ringR) <= kRingGrabPx * 1.5f || d <= wellRadius());
+    const bool inWell = hitTestsWell (e.position);
+    const bool nearRing = inWell && (std::abs (d - ringR) <= kRingGrabPx * 1.5f);
+    const bool near = nearRing || (inWell && d <= wellRadius());
+
+    setTooltip (nearRing ? afterimage::tooltips::recallRing
+                         : afterimage::tooltips::memoryWell);
+
     if (near != hoverNearRing_)
     {
         hoverNearRing_ = near;
@@ -215,6 +218,7 @@ void MemoryWellComponent::mouseMove (const juce::MouseEvent& e)
 void MemoryWellComponent::mouseExit (const juce::MouseEvent&)
 {
     hoverNearRing_ = false;
+    setTooltip (afterimage::tooltips::memoryWell);
     if (! draggingRecall_)
         setMouseCursor (juce::MouseCursor::NormalCursor);
 }

@@ -1,5 +1,6 @@
 #include "LicensePanel.h"
 #include "AfterimageFonts.h"
+#include "AfterimageTooltips.h"
 
 //==============================================================================
 class LicensePanel::ActivationOverlay : public juce::Component
@@ -169,7 +170,6 @@ LicensePanel::LicensePanel (afterimage::licensing::LicenseManager& manager)
     : manager_ (manager)
 {
     setMouseCursor (juce::MouseCursor::PointingHandCursor);
-    setTooltip ("LICENSE\nClick to view trial status or activate.");
     refreshStatus();
 }
 
@@ -182,17 +182,21 @@ void LicensePanel::refreshStatus()
 {
     using namespace afterimage::licensing;
     chipText_ = manager_.getStatusMessage().toUpperCase();
-    switch (manager_.getStatus())
+    const auto status = manager_.getStatus();
+    if (status == LicenseStatus::Licensed)
     {
-        case LicenseStatus::Licensed:
-            chipColour_ = AfterimageLookAndFeel::accentCyan();
-            break;
-        case LicenseStatus::Trial:
-            chipColour_ = AfterimageLookAndFeel::accentWarm();
-            break;
-        default:
-            chipColour_ = juce::Colour (0xffe08a7a);
-            break;
+        chipColour_ = AfterimageLookAndFeel::accentCyan();
+        setTooltip (afterimage::tooltips::license);
+    }
+    else if (status == LicenseStatus::Trial)
+    {
+        chipColour_ = AfterimageLookAndFeel::accentWarm();
+        setTooltip (afterimage::tooltips::trial);
+    }
+    else
+    {
+        chipColour_ = juce::Colour (0xffe08a7a);
+        setTooltip (afterimage::tooltips::license);
     }
     if (overlay_ != nullptr)
         overlay_->refresh();
