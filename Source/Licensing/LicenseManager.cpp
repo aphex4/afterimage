@@ -197,10 +197,17 @@ void LicenseManager::recomputeStatusUnlocked()
         return;
     }
 
+    // Advance persisted lastObserved only when enough wall time has elapsed so a
+    // long-lived open editor does not rewrite activation state on every refresh.
+    // In-memory status still recomputes from `now` every refresh (trial/expiry).
     if (now > state_.lastObservedUnix)
     {
-        state_.lastObservedUnix = now;
-        juce::ignoreUnused (storage_.save (state_));
+        constexpr juce::int64 kPersistIntervalSec = 30;
+        if ((now - state_.lastObservedUnix) >= kPersistIntervalSec)
+        {
+            state_.lastObservedUnix = now;
+            juce::ignoreUnused (storage_.save (state_));
+        }
     }
 
     if (state_.hasLicense && state_.licenseText.isNotEmpty())

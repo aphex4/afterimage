@@ -627,7 +627,7 @@ static void testEngineInfluenceZeroAndFreeze()
         juce::AudioBuffer<float> buf (channels, total);
         for (int ch = 0; ch < channels; ++ch)
             for (int i = 0; i < total; ++i)
-                buf.setSample (ch, i, 0.2f * std::sin (2.0 * juce::MathConstants<double>::pi * 440.0 * (double) i / 48000.0));
+                buf.setSample (ch, i, 0.2f * (float) std::sin (2.0 * juce::MathConstants<double>::pi * 440.0 * (double) i / 48000.0));
 
         juce::AudioBuffer<float> dry;
         dry.makeCopyOf (buf);
@@ -675,8 +675,8 @@ static void testEngineInfluenceZeroAndFreeze()
         juce::AudioBuffer<float> buf (2, 8192);
         for (int i = 0; i < 8192; ++i)
         {
-            buf.setSample (0, i, 0.3f * std::sin (2.0 * juce::MathConstants<double>::pi * 220.0 * (double) i / 48000.0));
-            buf.setSample (1, i, 0.3f * std::sin (2.0 * juce::MathConstants<double>::pi * 330.0 * (double) i / 48000.0));
+            buf.setSample (0, i, 0.3f * (float) std::sin (2.0 * juce::MathConstants<double>::pi * 220.0 * (double) i / 48000.0));
+            buf.setSample (1, i, 0.3f * (float) std::sin (2.0 * juce::MathConstants<double>::pi * 330.0 * (double) i / 48000.0));
         }
         engine.process (buf);
 
@@ -756,7 +756,7 @@ static void testStereoIsolation()
     buf.clear();
     // Only left channel has energy
     for (int i = 0; i < 24000; ++i)
-        buf.setSample (0, i, 0.5f * std::sin (2.0 * juce::MathConstants<double>::pi * 440.0 * (double) i / 48000.0));
+        buf.setSample (0, i, 0.5f * (float) std::sin (2.0 * juce::MathConstants<double>::pi * 440.0 * (double) i / 48000.0));
 
     engine.process (buf);
 
@@ -804,8 +804,8 @@ static void testFftLayout()
     int maxBin = -1;
     for (int k = 0; k <= N / 2; ++k)
     {
-        const float re = buf[2 * k];
-        const float im = buf[2 * k + 1];
+        const float re = buf[(size_t) (2 * k)];
+        const float im = buf[(size_t) (2 * k + 1)];
         const float mag = std::sqrt (re * re + im * im);
         if (mag > maxMag) { maxMag = mag; maxBin = k; }
     }
@@ -845,7 +845,7 @@ static void runStftIdentityCase (double sampleRate, int preparedBlock, int hostB
     {
         input.setSample (ch, 0, 1.0f);
         for (int i = 0; i < totalSamples; ++i)
-            input.addSample (ch, i, 0.25f * std::sin (2.0 * juce::MathConstants<double>::pi * 440.0 * (double) i / sampleRate));
+            input.addSample (ch, i, 0.25f * (float) std::sin (2.0 * juce::MathConstants<double>::pi * 440.0 * (double) i / sampleRate));
     }
 
     output.makeCopyOf (input);

@@ -125,7 +125,7 @@ inline constexpr const char* outputMeter =
 inline constexpr const char* preset =
     "PRESET\n"
     "Loads a factory preset.\n"
-    "Presets store parameter values only — never the live spectral memory.";
+    "Presets store parameter values only. Live memory is not saved.";
 
 inline constexpr const char* license =
     "LICENSE\n"

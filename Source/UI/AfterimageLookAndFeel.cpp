@@ -216,6 +216,40 @@ juce::Font AfterimageLookAndFeel::getComboBoxFont (juce::ComboBox&)
     return AfterimageFonts::get (AfterimageFontRole::Status);
 }
 
+void AfterimageLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& button,
+                                                  const juce::Colour& /*backgroundColour*/,
+                                                  bool shouldDrawButtonAsHighlighted,
+                                                  bool shouldDrawButtonAsDown)
+{
+    auto bounds = button.getLocalBounds().toFloat().reduced (0.5f);
+    const bool enabled = button.isEnabled();
+    const float radius = 6.0f;
+
+    const float lift = shouldDrawButtonAsDown ? 0.0f
+                      : (shouldDrawButtonAsHighlighted ? 0.08f : 0.03f);
+    g.setColour (panel().brighter (enabled ? lift : 0.0f).withAlpha (enabled ? 1.0f : 0.55f));
+    g.fillRoundedRectangle (bounds, radius);
+
+    const bool primary = button.getProperties().contains ("afterimagePrimary");
+    g.setColour (primary ? accentCyan().withAlpha (enabled ? 0.55f : 0.25f)
+                         : panelEdge().brighter (shouldDrawButtonAsHighlighted ? 0.18f : 0.08f)
+                               .withAlpha (enabled ? 0.95f : 0.45f));
+    g.drawRoundedRectangle (bounds, radius, primary ? 1.2f : 1.0f);
+}
+
+void AfterimageLookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton& button,
+                                            bool /*shouldDrawButtonAsHighlighted*/,
+                                            bool /*shouldDrawButtonAsDown*/)
+{
+    g.setFont (getTextButtonFont (button, button.getHeight()));
+    g.setColour (button.findColour (button.getToggleState() ? juce::TextButton::textColourOnId
+                                                            : juce::TextButton::textColourOffId)
+                         .withMultipliedAlpha (button.isEnabled() ? 1.0f : 0.45f));
+    g.drawFittedText (button.getButtonText(),
+                      button.getLocalBounds().reduced (4, 2),
+                      juce::Justification::centred, 1);
+}
+
 void AfterimageLookAndFeel::drawComboBox (juce::Graphics& g, int width, int height, bool,
                                           int, int, int, int, juce::ComboBox& box)
 {

@@ -80,6 +80,8 @@ namespace constants
     constexpr int    editorMinWidth      = 800;
     constexpr int    editorMinHeight     = 560;
     constexpr int    uiTimerHz           = 60;
+    /** Wall-clock license refresh while the editor is open (message thread only). */
+    constexpr int    licenseRefreshIntervalSec = 45;
     constexpr int    maxInternalBlockSize = 2048; // chunk size for oversized host callbacks
 
 

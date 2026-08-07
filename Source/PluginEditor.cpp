@@ -369,11 +369,16 @@ void AfterimageAudioProcessorEditor::timerCallback()
     }
 
 #if defined (AFTERIMAGE_ENABLE_LICENSING)
+    // Periodic LicenseManager::refresh() on the message thread only (not every paint).
+    // UI chip/overlay update follows manager refresh so trial expiry / activation stick.
     if (licensePanel != nullptr)
     {
-        if (++licenseRefreshCounter_ >= 60)
+        const int ticks = afterimage::constants::uiTimerHz
+                          * afterimage::constants::licenseRefreshIntervalSec;
+        if (++licenseRefreshCounter_ >= ticks)
         {
             licenseRefreshCounter_ = 0;
+            audioProcessor.getLicenseManager().refresh();
             licensePanel->refreshStatus();
         }
     }
