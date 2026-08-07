@@ -4,8 +4,8 @@
 
 AFTERIMAGE is a real-time spectral memory processor. It continuously analyzes and stores a short history of the signal’s spectral content so the present can interact with its own recent past — producing evolving spectral echoes, ghost harmonics, frequency suppression, and morphing textures.
 
-> **Current milestone: Audible retune + offline licensing**  
-> Shadow / Erase / Merge with perceptual Influence mapping, factory presets (subtle/medium/extreme), Memory Well, Ed25519 license activation, and validation tests.
+> **Current milestone: v1.0 Release Candidate**  
+> Shadow / Erase / Merge with perceptual Influence mapping, Gain Match, factory presets (subtle/medium/extreme), Memory Well, Ed25519 license activation, and validation tests.
 
 ---
 
@@ -17,8 +17,9 @@ AFTERIMAGE is a real-time spectral memory processor. It continuously analyzes an
 - **Erase** — sensitive overlap carve where memory meets the present
 - **Merge** — log-magnitude morph toward recalled memory
 - **Random Recall** — slow smoothed wander around Recall Position
+- **Gain Match** — broadband loudness trim of the completed mix vs latency-aligned dry (tone/stereo/mix unchanged)
 - Factory presets in subtle / medium / extreme categories
-- Shared controls: Recall (ring), Forget (retention floor), Blur (history only), Transient Preserve, Influence (perceptual curve), Mix, Output
+- Shared controls: Recall (ring), Forget (retention floor), Blur (history only), Transient Preserve, Influence (perceptual curve), Mix, Output, Freeze, Bypass
 - Offline licensing: 14-day trial, signed `.afterimage-license`, compact activation UI
 - ~80 ms click-free crossfade when switching modes
 - Memory Well particle visualization (DSP-seeded)
@@ -141,8 +142,8 @@ Commercial builds include an offline signed-license system (Ed25519 via Monocyph
 
 - 14-day trial with full DSP; after expiry → latency-compensated dry pass-through
 - Import `.afterimage-license` or paste from the header license chip
-- See [Docs/LICENSING.md](Docs/LICENSING.md) for architecture, tool usage, and security limitations
-- Effect formula notes: [Docs/EFFECT_ENGINE.md](Docs/EFFECT_ENGINE.md)
+- See [docs/LICENSING.md](docs/LICENSING.md) for architecture, tool usage, and security limitations
+- Effect formula notes: [docs/EFFECT_ENGINE.md](docs/EFFECT_ENGINE.md)
 
 ```bash
 # Optional license tool (not in the plugin binary)
@@ -167,6 +168,7 @@ CMake options: `AFTERIMAGE_ENABLE_LICENSING` (default ON), `AFTERIMAGE_BUILD_LIC
 | Transients | 0–100% | Attack preservation (max ~65% influence reduction) |
 | Random | 0–100% | Slow smoothed wander around Recall Position |
 | Freeze | on/off | Stop writing new history frames |
+| Gain Match | on/off | Match mixed level to latency-aligned dry (broadband scalar) |
 | Mix | 0–100% | Equal-power dry/wet |
 | Output | −24…+12 dB | Output gain |
 | Bypass | on/off | Smoothed host-friendly bypass |
@@ -199,13 +201,14 @@ CMake options: `AFTERIMAGE_ENABLE_LICENSING` (default ON), `AFTERIMAGE_BUILD_LIC
 1. **Phase 1–8** — Foundation through factory presets + polish ✅ (Stereo Link deferred)
 2. **Audible retune** — perceptual Influence, retention floors, mode formulas ✅
 3. **Licensing** — offline Ed25519 licenses + trial + activation UI ✅
-4. **Next** — install production public key; optional online activation; Stereo Link
+4. **Gain Match** — post-mix broadband loudness match ✅
+5. **Next** — optional online activation; Stereo Link; user preset slots
 
 ---
 
 ## License
 
-Plugin code: project-local commercial product with offline activation (see Docs/LICENSING.md).  
+Plugin code: project-local commercial product with offline activation (see docs/LICENSING.md).  
 Vendored Monocypher: BSD-2-Clause OR CC0-1.0.  
 JUCE is subject to the [JUCE license](https://juce.com/legal/juce-8-licence/).
 Monocypher (Ed25519): BSD-2-Clause OR CC0-1.0.

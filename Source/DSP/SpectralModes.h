@@ -113,12 +113,6 @@ void writeInterleavedFromMagnitudePhase (float* interleavedFftData,
     return true;
 }
 
-/** @deprecated Prefer modeTransformsSpectrum — kept for older call sites. */
-[[nodiscard]] inline bool modeAppliesShadow (SpectralMode mode) noexcept
-{
-    return mode == SpectralMode::Shadow;
-}
-
 /**
     Shadow / Erase / Merge spectral transforms.
 

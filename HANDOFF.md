@@ -30,7 +30,7 @@ Modes: **Shadow**, **Erase**, **Merge** — all implemented and audible. Random 
 | 7 Memory Well viz | ✅ | DSP-seeded circular particles + Recall ring |
 | 8 Presets / polish | ✅ | ≥8 factory presets, tooltips; Stereo Link deferred |
 
-Current milestone line in README: **Audible retune + offline licensing**.
+Current milestone line in README: **v1.0 Release Candidate**.
 
 ---
 
@@ -49,7 +49,9 @@ Input
          PUSH unmodified analysis frame into history (unless Freeze)
          IFFT → synthesis window → WOLA
   → delay dry by STFT latency
-  → equal-power dry/wet mix + output gain + smoothed bypass
+  → equal-power dry/wet mix
+  → Gain Match (optional broadband scalar on completed mix vs dry)
+  → smoothed bypass → entitlement dry (if licensing) → output gain
   → Output
 ```
 
@@ -150,10 +152,11 @@ Recall 40%, Influence 40%, Forget 25%, Blur 12%, Transient Preserve 35% — matc
 | `outputGain` | Output | −24…+12 dB |
 | `mix` | Mix | equal-power, latency-aligned |
 | `bypass` | Bypass | smoothed |
+| `gainMatch` | Gain Match | bool; broadband loudness trim of mix vs dry (default off) |
 
 Smoothing lives in `ParameterSmoother` / processBlock. Mode crossfade ~80 ms in `SpectralModeProcessor`.
 
-Factory presets retuned (Subtle / Medium / Extreme). Loading a preset clears live history.
+Factory presets retuned (Subtle / Medium / Extreme). Loading a preset clears live history and resets Gain Match adaptive state.
 
 ---
 
@@ -192,10 +195,6 @@ Manual check in Ableton Live 12: quit fully after rebuild so the binary reloads.
 
 ## 8. What to work on next (recommended)
 
-### Install production license public key
-
-Production public key is installed in `LicenseVerifier.cpp`. Keep the issuer secret offline in `../AFTERIMAGE-secrets/` (never commit). See `docs/LICENSING.md`.
-
 ### Deferred — Stereo Link
 
 Independent L/R histories remain. Shared/averaged memory would need careful RT-safe design so it does not destabilize isolation or Influence≈0 identity. Prefer not shipping a half-baked link.
@@ -206,6 +205,8 @@ Independent L/R histories remain. Shared/averaged memory would need careful RT-s
 - DAW audition matrix for Influence curve fine-tuning
 - Online activation / machine deactivation server
 - Recall / Smear modes (product backlog)
+
+Production public key is installed in `LicenseVerifier.cpp`. Keep the issuer secret offline in `../AFTERIMAGE-secrets/` (never commit). See `docs/LICENSING.md`.
 
 ---
 
@@ -241,4 +242,4 @@ When responding:
 
 ---
 
-*End of handoff. AFTERIMAGE audible retune + offline licensing; Stereo Link deferred.*
+*End of handoff. AFTERIMAGE v1.0 RC: audible retune + Gain Match + offline licensing; Stereo Link deferred.*

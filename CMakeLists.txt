@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(AFTERIMAGE VERSION 0.1.0 LANGUAGES C CXX)
+project(AFTERIMAGE VERSION 1.0.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -209,9 +209,9 @@ target_compile_definitions(AFTERIMAGE_Tests
         JucePlugin_ProducesMidiOutput=0
         JucePlugin_IsMidiEffect=0
         JucePlugin_EditorRequiresKeyboardFocus=0
-        JucePlugin_Version=0.1.0
-        JucePlugin_VersionCode=0x100
-        JucePlugin_VersionString="0.1.0"
+        JucePlugin_Version=1.0.0
+        JucePlugin_VersionCode=0x10000
+        JucePlugin_VersionString="1.0.0"
         JucePlugin_VSTUniqueID=JucePlugin_PluginCode
         JucePlugin_VSTCategory=kPlugCategEffect)
 

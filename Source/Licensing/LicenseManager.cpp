@@ -35,7 +35,7 @@ void LicenseManager::initialise()
     {
         state_.trialStartUnix = now;
         state_.lastObservedUnix = now;
-        storage_.save (state_);
+        juce::ignoreUnused (storage_.save (state_));
     }
 
     recomputeStatusUnlocked();
@@ -200,7 +200,7 @@ void LicenseManager::recomputeStatusUnlocked()
     if (now > state_.lastObservedUnix)
     {
         state_.lastObservedUnix = now;
-        storage_.save (state_);
+        juce::ignoreUnused (storage_.save (state_));
     }
 
     if (state_.hasLicense && state_.licenseText.isNotEmpty())

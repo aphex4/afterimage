@@ -8,7 +8,7 @@ namespace
 const AfterimageAudioProcessorEditor::DockItem* dockItems()
 {
     // Tips use ASCII only (no em/en dashes, no smart quotes).
-    // Influence tip is mode-dynamic; placeholder here is replaced in buildDock / mode updates.
+    // Influence tip is mode-dynamic; dock default is replaced in buildDock / mode updates.
     static const AfterimageAudioProcessorEditor::DockItem items[] = {
         { "MEMORY", afterimage::constants::idMemoryLength,
           afterimage::tooltips::memory,
@@ -353,6 +353,8 @@ void AfterimageAudioProcessorEditor::timerCallback()
         memoryStatusLabel.setText (memText, juce::dontSendNotification);
     }
 
+    // Live knob / automation edits must flip the menu off the factory name.
+    audioProcessor.refreshProgramStatus();
     const int wantId = audioProcessor.isCustomProgram()
                            ? 0
                            : audioProcessor.getCurrentProgram() + 1;

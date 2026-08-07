@@ -533,12 +533,24 @@ void testCustomProgramReporting()
     p.setCurrentProgram (0);
     CHECK (! p.isCustomProgram());
     setParam (p, idInfluence, 0.99f);
+    p.refreshProgramStatus();
+    CHECK (p.isCustomProgram());
+    CHECK (p.getProgramName (p.getCurrentProgram()) == "Custom");
+
     juce::MemoryBlock mb;
     p.getStateInformation (mb);
     AfterimageAudioProcessor loaded;
     loaded.setStateInformation (mb.getData(), (int) mb.getSize());
     CHECK (loaded.isCustomProgram());
     CHECK (loaded.getProgramName (loaded.getCurrentProgram()) == "Custom");
+
+    // Gain Match on factory params → Custom (presets leave GM off).
+    AfterimageAudioProcessor gm;
+    prepareProc (gm, 48000.0, 512, 2);
+    gm.setCurrentProgram (0);
+    setBool (gm, idGainMatch, true);
+    gm.refreshProgramStatus();
+    CHECK (gm.isCustomProgram());
 }
 } // namespace
 

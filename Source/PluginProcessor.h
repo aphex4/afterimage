@@ -68,6 +68,9 @@ public:
     /** True when APVTS does not match the reported factory program index. */
     bool isCustomProgram() const noexcept { return customProgram_; }
 
+    /** Re-evaluate factory vs Custom from live APVTS (UI timer / after edits). */
+    void refreshProgramStatus() noexcept { syncProgramIndexFromParameters(); }
+
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
 
@@ -84,7 +87,7 @@ public:
     float getOutputLevel() const noexcept { return engine.getVisualization().loadOutputPeak(); }
     float getHistoryFill() const noexcept { return engine.getVisualization().loadHistoryFill(); }
 
-    /** Debug / UI: current Gain Match correction in dB (0 when inactive / settled). */
+    /** Debug / tests: current Gain Match detector correction in dB (runs even when GM is off). */
     float getGainMatchCorrectionDb() const noexcept { return gainMatch_.loadDebugCorrectionDb(); }
 
 #if defined (AFTERIMAGE_ENABLE_LICENSING)

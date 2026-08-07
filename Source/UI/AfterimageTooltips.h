@@ -124,16 +124,8 @@ inline constexpr const char* outputMeter =
 
 inline constexpr const char* preset =
     "PRESET\n"
-    "Loads or saves plugin settings.\n"
-    "Presets store parameter values only.";
-
-inline constexpr const char* nextPreset =
-    "NEXT PRESET\n"
-    "Loads the next preset.";
-
-inline constexpr const char* previousPreset =
-    "PREVIOUS PRESET\n"
-    "Loads the previous preset.";
+    "Loads a factory preset.\n"
+    "Presets store parameter values only — never the live spectral memory.";
 
 inline constexpr const char* license =
     "LICENSE\n"
@@ -149,11 +141,6 @@ inline constexpr const char* memoryStatus =
     "MEMORY STATUS\n"
     "Shows how much of the available memory is currently filled.\n"
     "The memory fills as audio is played.";
-
-inline constexpr const char* cpu =
-    "CPU\n"
-    "Shows the plugin's current processing load.\n"
-    "Higher values indicate more CPU usage.";
 
 [[nodiscard]] inline const char* influenceForMode (SpectralMode mode) noexcept
 {

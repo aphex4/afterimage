@@ -53,7 +53,7 @@ private:
     bool hasKey_ = false;
 };
 
-/** Production public key (placeholder zeros until real key is installed). */
+/** Production Ed25519 public key embedded in the plugin (not a private key). */
 [[nodiscard]] const std::uint8_t* getProductionPublicKey() noexcept;
 
 /** Test public key — only linked when AFTERIMAGE_USE_TEST_LICENSE_KEY=1. */

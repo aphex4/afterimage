@@ -106,3 +106,13 @@ Compile with `-DAFTERIMAGE_DEBUG_AUDITION=<n>` (not in release UI):
 ## Factory presets
 
 Erase/Merge presets retuned for familiarity carve and identity transfer (not louder Output). Shadow presets unchanged in intent.
+
+## Gain Match
+
+Optional broadband loudness trim after equal-power Mix (before Bypass / entitlement / Output Gain):
+
+- Measures latency-aligned dry vs completed mix (mean-square envelopes, ~450 ms)
+- Applies one stereo-linked scalar only — no filtering or spectral processing
+- Asymmetric dB correction (faster attenuation, slower recovery), deadband, silence gate
+- Enable/disable crossfade ~50 ms; presets / state load reset adaptive state
+- Mix=0% → dry vs dry → ~unity; Bypass → dry unaltered by GM

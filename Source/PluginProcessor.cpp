@@ -32,11 +32,13 @@ bool paramsMatchPreset (const juce::AudioProcessorValueTreeState& apvts, int ind
     auto* random = apvts.getRawParameterValue (idRandomRecall);
     auto* outG = apvts.getRawParameterValue (idOutputGain);
     auto* mix = apvts.getRawParameterValue (idMix);
+    auto* gainMatch = apvts.getRawParameterValue (idGainMatch);
     if (mode == nullptr || mem == nullptr || recall == nullptr || infl == nullptr
         || forget == nullptr || blur == nullptr || trans == nullptr || freeze == nullptr
-        || random == nullptr || outG == nullptr || mix == nullptr)
+        || random == nullptr || outG == nullptr || mix == nullptr || gainMatch == nullptr)
         return false;
 
+    // Factory presets always leave Gain Match off; enabling it marks Custom.
     return juce::roundToInt (mode->load()) == pr.mode
         && near (mem->load(), pr.memoryLengthSec, 0.02f)
         && near (recall->load(), pr.recallPosition, 0.002f)
@@ -47,7 +49,8 @@ bool paramsMatchPreset (const juce::AudioProcessorValueTreeState& apvts, int ind
         && ((freeze->load() > 0.5f) == pr.freeze)
         && near (random->load(), pr.randomRecall, 0.002f)
         && near (outG->load(), pr.outputGainDb, 0.15f)
-        && near (mix->load(), pr.mix, 0.002f);
+        && near (mix->load(), pr.mix, 0.002f)
+        && (gainMatch->load() < 0.5f);
 }
 } // namespace
 
