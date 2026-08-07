@@ -194,7 +194,7 @@ Manual check in Ableton Live 12: quit fully after rebuild so the binary reloads.
 
 ### Install production license public key
 
-Replace the zeroed production key slot in `LicenseVerifier.cpp` before commercial release. Keep private key offline. See `docs/LICENSING.md`.
+Production public key is installed in `LicenseVerifier.cpp`. Keep the issuer secret offline in `../AFTERIMAGE-secrets/` (never commit). See `docs/LICENSING.md`.
 
 ### Deferred — Stereo Link
 

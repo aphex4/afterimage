@@ -38,10 +38,11 @@ Payload fields (deterministic JSON):
 - **Algorithm:** Ed25519 (SHA-512 + Edwards25519) via **Monocypher 4.0.2** (audited, BSD-2-Clause / CC0)
 - **Abstraction:** `LicenseVerifier` — only public-key verify in the plugin
 - **Private key:** never shipped in the plugin; only in `AfterimageLicenseTool` / `Tests/Fixtures` (test seed/secret)
-- **Production public key:** placeholder zeros in `LicenseVerifier.cpp` until a real issuer key is installed
+- **Production public key:** installed in `kProductionPublicKey` in `LicenseVerifier.cpp` (public material only)
+- **Production private key:** offline only — never under `Source/`, never committed (local path e.g. `../AFTERIMAGE-secrets/`)
 - **Test builds:** `-DAFTERIMAGE_USE_TEST_LICENSE_KEY=ON` embeds the fixture public key
 
-Production readiness: verification of correctly issued Ed25519 licenses is production-ready. A real production public key must replace the zero placeholder before commercial shipping. Local DRM is deterrence, not unbreakable protection.
+Production readiness: verification of correctly issued Ed25519 licenses is production-ready once `kProductionPublicKey` is non-zero and commercial configure succeeds. Local DRM is deterrence, not unbreakable protection.
 
 ## Components (`Source/Licensing/`)
 
@@ -90,8 +91,19 @@ Salted BLAKE2b over computer name + logon name + OS name + platform tag. Raw IDs
 
 ### Production key injection (commercial packaging)
 
-1. Generate an Ed25519 issuer keypair **offline** (private key never enters this repo or plugin binaries).
-2. Replace the 32-byte `kProductionPublicKey` array in `Source/Licensing/LicenseVerifier.cpp` with the public key bytes.
+1. Generate an Ed25519 issuer keypair **offline** with the license tool (private key never enters this repo or plugin binaries):
+
+```bash
+cmake -B build -S . -DAFTERIMAGE_BUILD_LICENSE_TOOL=ON -DAFTERIMAGE_USE_TEST_LICENSE_KEY=ON
+cmake --build build --target AfterimageLicenseTool -j
+
+# OUTSIDE the plugin tree — e.g. sibling folder or $HOME/.afterimage/keys/
+./build/AfterimageLicenseTool --gen-issuer-keys --out-dir ../AFTERIMAGE-secrets
+```
+
+   Local convention: sibling folder **`../AFTERIMAGE-secrets/`** (never inside the plugin tree). Contains `production_ed25519_secret.bin` / `*_seed.bin` (mode 600) and `production_ed25519_public.bin` / `ProductionPublicKey.inc`.
+
+2. Replace the 32-byte `kProductionPublicKey` array in `Source/Licensing/LicenseVerifier.cpp` with the public key bytes from `ProductionPublicKey.inc` (public material only).
 3. Configure the shipping build with:
 
 ```bash
@@ -114,18 +126,21 @@ cmake --build build --target AfterimageLicenseTool -j
 # Generate test key material into Tests/Fixtures
 ./build/AfterimageLicenseTool --gen-test-keys --out-dir Tests/Fixtures
 
+# Generate production issuer keys (OUTSIDE repo)
+./build/AfterimageLicenseTool --gen-issuer-keys --out-dir ../AFTERIMAGE-secrets
+
 # Issue a license (64-byte secret from fixtures or your issuer key)
 ./build/AfterimageLicenseTool --sign \
-  --secret Tests/Fixtures/test_ed25519_secret.bin \
-  --out /tmp/demo.afterimage-license \
+  --secret ../AFTERIMAGE-secrets/production_ed25519_secret.bin \
+  --out ~/Desktop/customer.afterimage-license \
   --name "Ada" --email "ada@example.com"
 
 ./build/AfterimageLicenseTool --verify \
-  --public Tests/Fixtures/test_ed25519_public.bin \
-  --license /tmp/demo.afterimage-license
+  --public ../AFTERIMAGE-secrets/production_ed25519_public.bin \
+  --license ~/Desktop/customer.afterimage-license
 ```
 
-Copy the generated `LicensePublicKeys.inc` into `Source/Licensing/` when rotating the test key.
+Copy the generated test `LicensePublicKeys.inc` into `Source/Licensing/` when rotating the test key. Never copy secret/seed files into `Source/`.
 
 ## Security limitations (honest)
 

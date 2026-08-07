@@ -19,6 +19,39 @@ static bool readFileBytes (const juce::File& f, juce::MemoryBlock& out)
     return f.existsAsFile() && f.loadFileAsData (out);
 }
 
+static juce::String publicKeyToInc (const std::uint8_t* pk)
+{
+    juce::String inc;
+    for (int i = 0; i < 32; ++i)
+    {
+        if (i % 8 == 0 && i > 0) inc << '\n';
+        inc << "0x" << juce::String::toHexString ((int) pk[i]).paddedLeft ('0', 2);
+        if (i < 31) inc << ", ";
+    }
+    inc << '\n';
+    return inc;
+}
+
+static bool fillSecureSeed (std::uint8_t* seed32)
+{
+#if JUCE_WINDOWS
+    // Prefer CryptGenRandom via juce when available; fall back to juce Random.
+    juce::Random r (juce::Time::currentTimeMillis());
+    for (int i = 0; i < 32; ++i)
+        seed32[i] = (std::uint8_t) r.nextInt (256);
+    // Mix in high-resolution ticks to avoid all-zero on weak Random.
+    const auto ticks = (std::uint64_t) juce::Time::getHighResolutionTicks();
+    for (int i = 0; i < 8; ++i)
+        seed32[i] ^= (std::uint8_t) ((ticks >> (i * 8)) & 0xff);
+    return true;
+#else
+    juce::FileInputStream urandom (juce::File ("/dev/urandom"));
+    if (! urandom.openedOk())
+        return false;
+    return urandom.read (seed32, 32) == 32;
+#endif
+}
+
 static int genTestKeys (const juce::File& outDir)
 {
     outDir.createDirectory();
@@ -30,17 +63,37 @@ static int genTestKeys (const juce::File& outDir)
     outDir.getChildFile ("test_ed25519_seed.bin").replaceWithData (seed, 32);
     outDir.getChildFile ("test_ed25519_secret.bin").replaceWithData (sk, 64);
     outDir.getChildFile ("test_ed25519_public.bin").replaceWithData (pk, 32);
-
-    juce::String inc;
-    for (int i = 0; i < 32; ++i)
-    {
-        if (i % 8 == 0 && i > 0) inc << '\n';
-        inc << "0x" << juce::String::toHexString ((int) pk[i]).paddedLeft ('0', 2);
-        if (i < 31) inc << ", ";
-    }
-    inc << '\n';
-    outDir.getChildFile ("LicensePublicKeys.inc").replaceWithText (inc);
+    outDir.getChildFile ("LicensePublicKeys.inc").replaceWithText (publicKeyToInc (pk));
     std::cout << "Wrote test keys to " << outDir.getFullPathName() << "\n";
+    return 0;
+}
+
+/** Generate a fresh Ed25519 issuer keypair for production (or staging).
+    Writes seed/secret/public binaries + a C++ include snippet for kProductionPublicKey.
+    Never write these under Source/ or commit the secret/seed. */
+static int genIssuerKeys (const juce::File& outDir)
+{
+    outDir.createDirectory();
+    std::uint8_t seed[32];
+    if (! fillSecureSeed (seed))
+    {
+        std::cerr << "Failed to read secure random seed.\n";
+        return 1;
+    }
+
+    std::uint8_t sk[64], pk[32];
+    LicenseVerifier::keyPairFromSeed (seed, sk, pk);
+
+    outDir.getChildFile ("production_ed25519_seed.bin").replaceWithData (seed, 32);
+    outDir.getChildFile ("production_ed25519_secret.bin").replaceWithData (sk, 64);
+    outDir.getChildFile ("production_ed25519_public.bin").replaceWithData (pk, 32);
+    outDir.getChildFile ("ProductionPublicKey.inc").replaceWithText (publicKeyToInc (pk));
+
+    std::memset (seed, 0, sizeof (seed));
+    std::memset (sk, 0, sizeof (sk));
+
+    std::cout << "Wrote issuer keys to " << outDir.getFullPathName() << "\n"
+              << "Keep *_secret.bin and *_seed.bin offline. Only install the public key / .inc in the plugin.\n";
     return 0;
 }
 
@@ -126,6 +179,17 @@ int main (int argc, char* argv[])
         return genTestKeys (juce::File (out.isNotEmpty() ? out : "Tests/Fixtures"));
     }
 
+    if (hasOpt ("--gen-issuer-keys"))
+    {
+        const auto out = optVal ("--out-dir");
+        if (out.isEmpty())
+        {
+            std::cerr << "Need --out-dir (store OUTSIDE the plugin repo, e.g. ../AFTERIMAGE-secrets)\n";
+            return 1;
+        }
+        return genIssuerKeys (juce::File (out));
+    }
+
     if (hasOpt ("--sign"))
     {
         LicenseDocument doc;
@@ -160,6 +224,7 @@ int main (int argc, char* argv[])
     std::cout <<
         "AfterimageLicenseTool\n"
         "  --gen-test-keys --out-dir <dir>\n"
+        "  --gen-issuer-keys --out-dir <dir>   (production; keep secret offline)\n"
         "  --sign --secret <64B> --out <file> [--name ...] [--email ...] [--id ...] [--expires ISO]\n"
         "  --verify --public <32B> --license <file>\n";
     return 0;
