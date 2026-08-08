@@ -420,15 +420,15 @@ void SpectralEngine::onSpectrum (float* interleavedFftData, int fftSize, int cha
 
         if (wroteSpectrum)
         {
-            if (modes_.wantsShadowComplexWrite())
+            if (modes_.wantsComplexWrite())
             {
                 writeInterleavedWithTail (interleavedFftData,
                                           fftSize,
                                           workingFrame_.magnitudes.data(),
                                           workingFrame_.phases.data(),
-                                          modes_.getShadowTailMagnitudes (channelIndex),
-                                          modes_.getShadowTailPhases (channelIndex),
-                                          modes_.getLastShadowTailGain(),
+                                          modes_.getComplexWriteMagnitudes (channelIndex),
+                                          modes_.getComplexWritePhases (channelIndex),
+                                          modes_.getComplexWriteGain(),
                                           numBins);
             }
             else

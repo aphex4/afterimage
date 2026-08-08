@@ -344,6 +344,7 @@ void SpectralModeProcessor::prepare (int numBins, double sampleRate, int numChan
     mergeMemoryPrimed_.assign (static_cast<std::size_t> (numChannels_), false);
 
     spectralTail_.prepare (numBins_, sampleRate_, constants::hopSize, numChannels_);
+    spectralBlur_.prepare (numBins_, sampleRate_, constants::hopSize, numChannels_);
     logSmoother_.prepare (numBins_, sampleRate_, constants::fftSize);
     contrastSmoother_.prepare (numBins_, sampleRate_, constants::fftSize);
     contrastSmoother_.setWidth (1.0f / 12.0f);
@@ -357,8 +358,9 @@ void SpectralModeProcessor::reset()
     targetMode_ = SpectralMode::Shadow;
     previousMode_ = SpectralMode::Shadow;
     modeCrossfade_ = 1.0f;
-    shadowComplexWrite_ = false;
-    lastShadowTailGain_ = 0.0f;
+    complexWrite_ = false;
+    complexWriteGain_ = 0.0f;
+    complexWriteSource_ = ComplexWriteSource::None;
     lastShadowDiffusion_ = 0.0f;
 
     std::fill (blurScratch_.begin(), blurScratch_.end(), 0.0f);
@@ -387,6 +389,7 @@ void SpectralModeProcessor::reset()
         std::fill (m.begin(), m.end(), 0.0f);
 
     spectralTail_.reset();
+    spectralBlur_.reset();
     clearEraseMemory();
 }
 
@@ -411,6 +414,34 @@ void SpectralModeProcessor::clearEraseMemory() noexcept
 void SpectralModeProcessor::onFreezeEngaged() noexcept
 {
     std::fill (eraseFamiliarityFrozen_.begin(), eraseFamiliarityFrozen_.end(), true);
+}
+
+const float* SpectralModeProcessor::getComplexWriteMagnitudes (int channelIndex) const noexcept
+{
+    switch (complexWriteSource_)
+    {
+        case ComplexWriteSource::ShadowTail:
+            return spectralTail_.getTailMagnitudes (channelIndex);
+        case ComplexWriteSource::MergeBlur:
+            return spectralBlur_.getBlurMagnitudes (channelIndex);
+        case ComplexWriteSource::None:
+            break;
+    }
+    return nullptr;
+}
+
+const float* SpectralModeProcessor::getComplexWritePhases (int channelIndex) const noexcept
+{
+    switch (complexWriteSource_)
+    {
+        case ComplexWriteSource::ShadowTail:
+            return spectralTail_.getTailPhases (channelIndex);
+        case ComplexWriteSource::MergeBlur:
+            return spectralBlur_.getBlurPhases (channelIndex);
+        case ComplexWriteSource::None:
+            break;
+    }
+    return nullptr;
 }
 
 const float* SpectralModeProcessor::getShadowTailMagnitudes (int channelIndex) const noexcept
@@ -707,8 +738,11 @@ void SpectralModeProcessor::applyShadowPath (float* magnitudes,
     const float mixAmount = mapInfluenceForMode (SpectralMode::Shadow, params.influence);
     const float olaComp = 1.0f + tp.diffusion * (constants::incoherentOlaCompensation - 1.0f);
     lastShadowDiffusion_ = tp.diffusion;
-    lastShadowTailGain_ = juce::jlimit (0.0f, 16.0f, mixAmount * olaComp);
-    shadowComplexWrite_ = leaveDryForComplexWrite;
+    const float tailGain = juce::jlimit (0.0f, 16.0f, mixAmount * olaComp);
+    complexWriteGain_ = tailGain;
+    complexWrite_ = leaveDryForComplexWrite;
+    complexWriteSource_ = leaveDryForComplexWrite ? ComplexWriteSource::ShadowTail
+                                                  : ComplexWriteSource::None;
 
     const float* tailMag = spectralTail_.getTailMagnitudes (channelIndex);
     if (tailMag == nullptr)
@@ -720,9 +754,10 @@ void SpectralModeProcessor::applyShadowPath (float* magnitudes,
     {
         for (int i = 0; i < numBins; ++i)
             magnitudes[i] = tailMag[i] * (kDebugAudition == DebugAudition::ShadowTailOnly
-                                              ? lastShadowTailGain_ : 1.0f);
+                                              ? tailGain : 1.0f);
         sanitizeMagnitudes (magnitudes, numBins);
-        shadowComplexWrite_ = false;
+        complexWrite_ = false;
+        complexWriteSource_ = ComplexWriteSource::None;
         return;
     }
 #else
@@ -737,7 +772,7 @@ void SpectralModeProcessor::applyShadowPath (float* magnitudes,
 
     // Unit-test / mode-crossfade path: fold tail into magnitudes (shared phase).
     for (int i = 0; i < numBins; ++i)
-        magnitudes[i] += lastShadowTailGain_ * tailMag[i];
+        magnitudes[i] += tailGain * tailMag[i];
 
     applyAbsoluteCeiling (magnitudes, numBins, channelIndex);
     applyPerBinContrastLimiter (magnitudes, numBins, kContrastLimitDb,
@@ -1053,12 +1088,14 @@ void SpectralModeProcessor::applyModeMagnitudes (SpectralMode mode,
                              channelIndex, updateSmoothers, leaveDryForComplexWrite);
             break;
         case SpectralMode::Erase:
-            shadowComplexWrite_ = false;
+            complexWrite_ = false;
+            complexWriteSource_ = ComplexWriteSource::None;
             applyErasePath (magnitudes, memoryMagnitudes, numBins, params,
                             channelIndex, updateSmoothers);
             break;
         case SpectralMode::Merge:
-            shadowComplexWrite_ = false;
+            complexWrite_ = false;
+            complexWriteSource_ = ComplexWriteSource::None;
             applyMergePath (magnitudes, memoryMagnitudes, numBins, params,
                             channelIndex, updateSmoothers);
             break;
@@ -1104,7 +1141,8 @@ bool SpectralModeProcessor::process (SpectralMode mode,
                                      int hopSamples) noexcept
 {
     lastMode_ = mode;
-    shadowComplexWrite_ = false;
+    complexWrite_ = false;
+    complexWriteSource_ = ComplexWriteSource::None;
 
     if (channelIndex == 0)
     {
@@ -1162,7 +1200,8 @@ bool SpectralModeProcessor::process (SpectralMode mode,
             + crossfadeScratch_[static_cast<std::size_t> (i)] * b;
     }
 
-    shadowComplexWrite_ = false;
+    complexWrite_ = false;
+    complexWriteSource_ = ComplexWriteSource::None;
     return true;
 }
 

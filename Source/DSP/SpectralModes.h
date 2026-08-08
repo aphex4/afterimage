@@ -3,6 +3,7 @@
 #include "SpectralFrame.h"
 #include "SpectralHistoryBuffer.h"
 #include "SpectralMemoryProfile.h"
+#include "SpectralBlur.h"
 #include "SpectralTail.h"
 #include "LogSmoother.h"
 #include "../Utilities/Constants.h"
@@ -17,6 +18,14 @@ enum class SpectralMode
     Shadow = 0,
     Erase,
     Merge
+};
+
+/** Which buffer backs the engine's complex-add write path. */
+enum class ComplexWriteSource
+{
+    None = 0,
+    ShadowTail,
+    MergeBlur
 };
 
 /** Compile-time / developer audition path — not exposed in release UI. */
@@ -168,9 +177,14 @@ public:
     [[nodiscard]] const float* getEraseFamiliarityEnvelope (int channelIndex = 0) const noexcept;
     [[nodiscard]] int getEraseFamiliarityNumBins() const noexcept { return numBins_; }
 
-    /** Last Shadow complex-write state (engine uses writeInterleavedWithTail). */
-    [[nodiscard]] bool wantsShadowComplexWrite() const noexcept { return shadowComplexWrite_; }
-    [[nodiscard]] float getLastShadowTailGain() const noexcept { return lastShadowTailGain_; }
+    /** Mode-neutral complex-write state (engine uses writeInterleavedWithTail). */
+    [[nodiscard]] bool wantsComplexWrite() const noexcept { return complexWrite_; }
+    [[nodiscard]] float getComplexWriteGain() const noexcept { return complexWriteGain_; }
+    [[nodiscard]] ComplexWriteSource getComplexWriteSource() const noexcept { return complexWriteSource_; }
+    [[nodiscard]] const float* getComplexWriteMagnitudes (int channelIndex = 0) const noexcept;
+    [[nodiscard]] const float* getComplexWritePhases (int channelIndex = 0) const noexcept;
+
+    /** Direct SpectralTail buffer (diagnostics / Round 2 Shadow tests). */
     [[nodiscard]] const float* getShadowTailMagnitudes (int channelIndex = 0) const noexcept;
     [[nodiscard]] const float* getShadowTailPhases (int channelIndex = 0) const noexcept;
 
@@ -277,10 +291,12 @@ private:
     float modeCrossfade_ = 1.0f;
 
     SpectralTail spectralTail_;
+    SpectralBlur spectralBlur_;
     LogSmoother logSmoother_;
     LogSmoother contrastSmoother_; // fixed 1/12 octave for contrast limiter
-    bool shadowComplexWrite_ = false;
-    float lastShadowTailGain_ = 0.0f;
+    bool complexWrite_ = false;
+    float complexWriteGain_ = 0.0f;
+    ComplexWriteSource complexWriteSource_ = ComplexWriteSource::None;
     float lastShadowDiffusion_ = 0.0f;
 
     std::vector<float> blurScratch_;
