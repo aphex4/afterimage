@@ -38,13 +38,14 @@ constexpr DebugAudition kDebugAudition = DebugAudition::Normal;
 
 [[nodiscard]] float influenceExponentForMode (SpectralMode mode) noexcept
 {
+    // mapped = 1 - (1-x)^exp — higher exp → stronger mid-curve (more audible at 35–50%).
     switch (mode)
     {
-        case SpectralMode::Shadow: return 1.30f;
-        case SpectralMode::Erase:  return 1.50f;
-        case SpectralMode::Merge:  return 1.20f;
+        case SpectralMode::Shadow: return 1.55f; // was 1.30 — clearer tail at moderate Influence
+        case SpectralMode::Erase:  return 1.50f; // leave Erase carve curve alone
+        case SpectralMode::Merge:  return 1.60f; // was 1.20 — morph obvious without maxing Influence
     }
-    return 1.30f;
+    return 1.55f;
 }
 
 [[nodiscard]] float absoluteCeilingThreshold() noexcept
@@ -691,23 +692,25 @@ void SpectralModeProcessor::applyShadowPath (float* magnitudes,
     SpectralTailParams tp;
     tp.rt60Seconds = juce::jlimit (0.1f, 30.0f,
                                    memSec * std::pow (4.0f, 1.0f - 2.0f * forget));
-    // Higher Blur → darker / more diffuse HF damping (log curve in SpectralTail).
-    tp.hfDampRatio = 0.30f - blur * 0.20f;
+    // Stronger HF damp → darker, smoother decay (less metallic treble grit).
+    tp.hfDampRatio = 0.22f - blur * 0.14f;
     {
         const float x = juce::jlimit (0.0f, 1.0f, params.influence);
+        // Aggressive mid-curve so 35–45% Influence already feeds a clear tail.
         float inject = (x <= 0.0f) ? 0.0f
                      : (x >= 1.0f) ? 1.0f
-                                   : (1.0f - std::pow (1.0f - x, 1.5f));
+                                   : (1.0f - std::pow (1.0f - x, 1.90f));
         // Transient duck scales injection only (existing tail keeps ringing).
         inject *= computeTransientDuck (params, channelIndex, updateSmoothers);
         tp.injectGain = inject;
     }
-    tp.diffusion = blur;
+    // Soften render-time phase scatter — full Blur-scaled diffusion sounded grainy/metallic.
+    tp.diffusion = blur * 0.45f;
     // Per-bin independent shimmer adds inharmonic metallic drift; keep off after A1–A5.
     tp.shimmerCents = 0.0f;
-    // Always some spectral spread — even Blur 0 is a wash, not a bell bank.
-    tp.spectralDiffusion = 0.15f + blur * 0.45f;
-    tp.diffusionOctaves  = 0.15f + blur * 0.60f;
+    // Higher diffusion floor → wash instead of ringing bell bank / grit.
+    tp.spectralDiffusion = 0.32f + blur * 0.40f;
+    tp.diffusionOctaves  = 0.30f + blur * 0.50f;
     tp.freeze = params.freeze;
 
     if (updateSmoothers)
@@ -953,9 +956,10 @@ void SpectralModeProcessor::applyMergePath (float* magnitudes,
 
     SpectralBlurParams bp;
     // Blur drives BOTH time and phase — signature control for Merge.
-    bp.timeSmearMs      = 25.0f + blur * blur * 1800.0f; // 25 ms .. ~1.8 s, curved
-    bp.freqSmearOctaves = 0.05f + blur * 0.25f;          // deliberately narrow
-    bp.phaseScatter     = 0.25f + blur * 0.70f;          // always some scatter
+    // High floor so moderate Blur (~0.12–0.25) already reads as spectral cloud, not EQ.
+    bp.timeSmearMs      = 140.0f + std::pow (blur, 0.75f) * 1500.0f; // ~140 ms .. ~1.64 s
+    bp.freqSmearOctaves = 0.04f + blur * 0.18f;          // keep CQ narrow (wide CQ = de-esser)
+    bp.phaseScatter     = 0.42f + blur * 0.52f;          // obvious decorrelation at moderate Blur
     bp.memoryBlend      = juce::jlimit (0.0f, 1.0f, params.recallPosition);
     bp.freeze           = params.freeze;                 // B3: lock EMA, keep phase alive
 

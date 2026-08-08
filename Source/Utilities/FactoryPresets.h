@@ -32,11 +32,11 @@ struct Preset
     Factory bank after spectral-memory redesign.
 
     Categories demonstrate each mode immediately at moderate settings.
-    Soft Shadow remains program 0 / APVTS default direction.
+    Soft Shadow remains program 0 / APVTS default direction (Influence 0.50 / Blur 0.22).
 */
 inline constexpr Preset kPresets[] = {
     // --- Shadow ---
-    { "Soft Shadow",       0, 3.0f, 0.40f, 0.40f, 0.25f, 0.12f, 0.35f, false, 0.00f, 0.0f, 1.0f },
+    { "Soft Shadow",       0, 3.0f, 0.40f, 0.50f, 0.25f, 0.22f, 0.35f, false, 0.00f, 0.0f, 1.0f },
     { "Spectral Hall",     0, 5.5f, 0.52f, 0.58f, 0.18f, 0.48f, 0.40f, false, 0.00f, 0.0f, 1.0f },
     { "Vocal Afterglow",   0, 3.2f, 0.35f, 0.52f, 0.28f, 0.22f, 0.55f, false, 0.00f, 0.0f, 1.0f },
     { "Memory Delay",      0, 4.0f, 0.62f, 0.55f, 0.22f, 0.10f, 0.32f, false, 0.00f, 0.0f, 1.0f },
@@ -50,9 +50,9 @@ inline constexpr Preset kPresets[] = {
     { "Spectral Dust",     1, 4.5f, 0.42f, 0.70f, 0.20f, 0.38f, 0.35f, true,  0.00f, -0.5f, 1.0f },
 
     // --- Merge ---
-    { "Melt",              2, 3.5f, 0.45f, 0.48f, 0.22f, 0.45f, 0.40f, false, 0.00f, 0.0f, 1.0f },
+    { "Melt",              2, 3.5f, 0.45f, 0.58f, 0.22f, 0.58f, 0.40f, false, 0.00f, 0.0f, 1.0f },
     { "Vocal Blur",        2, 3.0f, 0.38f, 0.52f, 0.25f, 0.55f, 0.50f, false, 0.00f, 0.0f, 1.0f },
-    { "Past Into Present", 2, 4.5f, 0.55f, 0.58f, 0.28f, 0.38f, 0.36f, false, 0.05f, 0.0f, 1.0f },
+    { "Past Into Present", 2, 4.5f, 0.55f, 0.65f, 0.28f, 0.52f, 0.36f, false, 0.05f, 0.0f, 1.0f },
     { "Spectral Fog",      2, 5.0f, 0.50f, 0.62f, 0.32f, 0.68f, 0.32f, false, 0.10f, -0.5f, 1.0f },
     { "Memory Wash",       2, 6.0f, 0.60f, 0.70f, 0.35f, 0.72f, 0.28f, false, 0.12f, -1.0f, 0.95f },
 };

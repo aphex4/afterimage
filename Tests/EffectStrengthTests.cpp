@@ -100,6 +100,14 @@ void testMapInfluenceEndpointsAndMid()
             prev = y;
         }
     }
+
+    // Round-4: Shadow/Merge mid-curve floors (Erase left at 1.50).
+    CHECK (mapInfluenceForMode (SpectralMode::Shadow, 0.40f) > 0.52f);
+    CHECK (mapInfluenceForMode (SpectralMode::Merge, 0.40f) > 0.54f);
+    CHECK (mapInfluenceForMode (SpectralMode::Shadow, 0.50f) > 0.62f);
+    CHECK (mapInfluenceForMode (SpectralMode::Merge, 0.50f) > 0.64f);
+    CHECK_NEAR (mapInfluenceForMode (SpectralMode::Erase, 0.50f),
+                1.0f - std::pow (0.5f, 1.50f), 1e-5);
 }
 
 void testRetentionFloor()
@@ -182,8 +190,9 @@ void testShadowEffectStrength()
     const float v50 = run (0.50f);
     const float v75 = run (0.75f);
     const float v100 = run (1.0f);
-    CHECK (v25 > 0.2f + 0.02f);
+    CHECK (v25 > 0.2f + 0.04f);
     CHECK (v40 > v25);
+    CHECK (v40 > 0.2f + 0.12f); // moderate Influence already a clear hist-bin lift
     CHECK (v50 > v40 * 0.95f);
     CHECK (v75 > v50 * 0.95f);
     CHECK (std::isfinite (v100));
@@ -353,8 +362,9 @@ void testMergeEffectStrength()
     const double d25 = distFromCur (0.25f);
     const double d50 = distFromCur (0.50f);
     const double d100 = distFromCur (1.0f);
-    CHECK (d25 > 0.05);
+    CHECK (d25 > 0.08);
     CHECK (d50 > d25);
+    CHECK (d50 > 0.20); // mid Influence already an obvious spectral morph
     CHECK (d100 > d50);
     std::cout << "  logDist fromCur @25/50/100=" << d25 << " " << d50 << " " << d100 << "\n";
 }
@@ -1114,6 +1124,38 @@ void testRound3MergeCrestDissolve()
     CHECK (reduction >= 0.60f);
 }
 
+/** Moderate Blur/Influence must already dissolve crest (spectral cloud, not subtle EQ). */
+void testRound4MergeModerateBlurAudible()
+{
+    std::cout << "Round 4 Merge: moderate Blur crest dissolve...\n";
+    constexpr double sr = 48000.0;
+    constexpr int total = (int) (4.0 * sr);
+    const int latency = constants::fftSize;
+
+    juce::AudioBuffer<float> dry (1, total);
+    fillClickTrain (dry, sr, 4.0f, 1.0f);
+    juce::AudioBuffer<float> wet;
+    wet.makeCopyOf (dry);
+
+    SpectralEngine identity;
+    configureMergeEngine (identity, 0.0f, 0.20f, 1);
+    processEngineBlocks (identity, dry);
+
+    SpectralEngine blur;
+    configureMergeEngine (blur, 0.50f, 0.20f, 1);
+    processEngineBlocks (blur, wet);
+
+    const int start = latency + (int) (0.5 * sr);
+    const int n = total - start - (int) (0.25 * sr);
+    const float crestDry = crestFactor (dry.getReadPointer (0) + start, n);
+    const float crestWet = crestFactor (wet.getReadPointer (0) + start, n);
+    const float reduction = 1.0f - crestWet / std::max (1.0e-6f, crestDry);
+    std::cout << "  @Infl 50% Blur 20%: crestDry=" << crestDry << " crestWet=" << crestWet
+              << " reduction=" << reduction << "\n";
+    CHECK (crestDry > 2.0f);
+    CHECK (reduction >= 0.30f);
+}
+
 void testRound3MergePhaseDecorrelation()
 {
     std::cout << "Round 3 Merge: dry/wet cross-correlation...\n";
@@ -1445,6 +1487,7 @@ void runEffectStrengthTests()
     testRound2ShadowBandDecayRatio();
     testRound2ShadowBurstRt60Independent();
     testRound3MergeCrestDissolve();
+    testRound4MergeModerateBlurAudible();
     testRound3MergePhaseDecorrelation();
     testRound3MergeBlurMonotonicCrest();
     testRound3MergeStereoDecorrelation();

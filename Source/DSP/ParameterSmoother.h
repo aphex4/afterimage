@@ -52,10 +52,10 @@ struct ParameterSmoother
             s.setCurrentAndTargetValue (initial);
         };
 
-        init (influence,         constants::influenceSmoothSec, 0.40f);
+        init (influence,         constants::influenceSmoothSec, constants::influenceDefault);
         init (recallPosition,    constants::recallSmoothSec,    0.40f);
         init (forget,            constants::forgetSmoothSec,    0.25f);
-        init (blur,              constants::blurSmoothSec,      0.12f);
+        init (blur,              constants::blurSmoothSec,      constants::blurDefault);
         init (transientPreserve, 0.08f,                         0.35f);
         init (randomRecall,      constants::randomSmoothSec,    0.0f);
     }

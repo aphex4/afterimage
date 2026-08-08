@@ -29,6 +29,10 @@ namespace constants
     constexpr float  memoryLengthMaxSec = 10.0f;
     constexpr float  memoryLengthDefaultSec = 3.0f;
 
+    // Fresh-instance APVTS defaults (Soft Shadow). Saved sessions keep their stored values.
+    constexpr float  influenceDefault = 0.50f; // was 0.40 — stronger demo without maxing the dial
+    constexpr float  blurDefault      = 0.22f; // was 0.12 — Soft Shadow wash audible immediately
+
     // Stabilized memory-profile window (internal — not a user parameter).
     // Hop 512 @ 44.1 kHz ≈ 11.6 ms/frame → 90 ms ≈ 8 frames.
     constexpr float  memoryProfileWindowMs    = 90.0f;

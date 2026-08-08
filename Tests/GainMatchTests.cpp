@@ -159,10 +159,10 @@ void testStartupSmootherSnap()
     std::cout << "GainMatch/Startup: frame smoothers snap to APVTS...\n";
     AfterimageAudioProcessor p;
     prepareProc (p, 48000.0, 512, 2);
-    CHECK_NEAR (p.getEngine().getSmoothedInfluence(), 0.40f, 1.0e-5);
+    CHECK_NEAR (p.getEngine().getSmoothedInfluence(), afterimage::constants::influenceDefault, 1.0e-5);
     CHECK_NEAR (p.getEngine().getSmoothedRecall(), 0.40f, 1.0e-5);
     CHECK_NEAR (p.getEngine().getSmoothedForget(), 0.25f, 1.0e-5);
-    CHECK_NEAR (p.getEngine().getSmoothedBlur(), 0.12f, 1.0e-5);
+    CHECK_NEAR (p.getEngine().getSmoothedBlur(), afterimage::constants::blurDefault, 1.0e-5);
     CHECK_NEAR (p.getEngine().getSmoothedTransient(), 0.35f, 1.0e-5);
 }
 

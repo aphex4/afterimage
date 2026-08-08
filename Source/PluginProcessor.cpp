@@ -106,14 +106,15 @@ juce::AudioProcessorValueTreeState::ParameterLayout AfterimageAudioProcessor::cr
         juce::NormalisableRange<float> (memoryLengthMinSec, memoryLengthMaxSec, 0.01f, 0.45f),
         memoryLengthDefaultSec,
         juce::AudioParameterFloatAttributes().withStringFromValueFunction (secondsText)));
-    // Defaults: demonstrative but musical (saved sessions keep their values).
+    // Defaults match Soft Shadow for an instant demo on fresh loads.
+    // Influence 0.50 (was 0.40): new-instance default only — saved sessions keep their values.
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { idRecallPosition, 1 }, "Recall Position",
         juce::NormalisableRange<float> (0.0f, 1.0f, 0.001f), 0.40f,
         juce::AudioParameterFloatAttributes().withStringFromValueFunction (percentText)));
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { idInfluence, 1 }, "Influence",
-        juce::NormalisableRange<float> (0.0f, 1.0f, 0.001f), 0.40f,
+        juce::NormalisableRange<float> (0.0f, 1.0f, 0.001f), influenceDefault,
         juce::AudioParameterFloatAttributes().withStringFromValueFunction (percentText)));
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { idForget, 1 }, "Forget",
@@ -121,7 +122,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout AfterimageAudioProcessor::cr
         juce::AudioParameterFloatAttributes().withStringFromValueFunction (percentText)));
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { idBlur, 1 }, "Blur",
-        juce::NormalisableRange<float> (0.0f, 1.0f, 0.001f), 0.12f,
+        juce::NormalisableRange<float> (0.0f, 1.0f, 0.001f), blurDefault,
         juce::AudioParameterFloatAttributes().withStringFromValueFunction (percentText)));
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { idTransientPreserve, 1 }, "Transient Preserve",
