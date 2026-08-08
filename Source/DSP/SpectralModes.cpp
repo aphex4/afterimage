@@ -31,13 +31,13 @@ constexpr float kEraseFamiliarityKnee = 0.12f;
 constexpr float kEraseContrastExp = 1.05f;
 constexpr float kEraseMaskTemporalCoeff = 0.68f;
 constexpr float kEraseSoftFloorLin = 0.03f;
-constexpr int   kEraseMaskBaseRadius = 1;
-constexpr int   kEraseBroadEnvRadius = 14;
+constexpr float kEraseBroadEnvOctaves = 1.0f;
 
 // Merge
 constexpr float kMergeDbEpsilon = 1.0e-8f;
 constexpr float kMergeCurrentProfileMs = 70.0f;
-constexpr int   kMergeEnvBaseRadius = 12;
+constexpr float kMergeEnvBaseOctaves = 0.5f;
+constexpr float kMergeEnvMaxOctaves = 2.0f;
 
 #if defined (AFTERIMAGE_DEBUG_AUDITION)
 constexpr DebugAudition kDebugAudition = static_cast<DebugAudition> (AFTERIMAGE_DEBUG_AUDITION);
@@ -169,13 +169,22 @@ void applyPerBinContrastLimiter (float* magnitudes,
                                  int numBins,
                                  float maxRelativePeakDb,
                                  float* scratchNeighborhood,
-                                 float* prefixScratch) noexcept
+                                 float* prefixScratch,
+                                 LogSmoother* logSmoother) noexcept
 {
     if (magnitudes == nullptr || scratchNeighborhood == nullptr || numBins <= 0)
         return;
 
-    constexpr int kNeighborRadius = 2;
-    boxBlurMagnitudes (magnitudes, scratchNeighborhood, numBins, kNeighborRadius, prefixScratch);
+    if (logSmoother != nullptr && logSmoother->isPrepared())
+    {
+        logSmoother->setWidth (1.0f / 12.0f);
+        logSmoother->process (magnitudes, scratchNeighborhood, numBins, prefixScratch);
+    }
+    else
+    {
+        constexpr int kNeighborRadius = 2;
+        boxBlurMagnitudes (magnitudes, scratchNeighborhood, numBins, kNeighborRadius, prefixScratch);
+    }
 
     const float maxRatio = constants::dbToGain (std::max (6.0f, maxRelativePeakDb));
     const float softKnee = 0.35f;
@@ -189,7 +198,6 @@ void applyPerBinContrastLimiter (float* magnitudes,
             continue;
 
         const float target = local * maxRatio;
-        // Soft knee: blend toward the limit without flattening harmonics.
         magnitudes[i] = mag + (target - mag) * softKnee;
         if (! std::isfinite (magnitudes[i]))
             magnitudes[i] = 0.0f;
@@ -317,6 +325,9 @@ void SpectralModeProcessor::prepare (int numBins, double sampleRate, int numChan
                                  std::vector<float> (static_cast<std::size_t> (numBins_), 0.0f));
 
     spectralTail_.prepare (numBins_, sampleRate_, constants::hopSize, numChannels_);
+    logSmoother_.prepare (numBins_, sampleRate_, constants::fftSize);
+    contrastSmoother_.prepare (numBins_, sampleRate_, constants::fftSize);
+    contrastSmoother_.setWidth (1.0f / 12.0f);
 
     reset();
 }
@@ -464,35 +475,19 @@ void SpectralModeProcessor::diffuseMagnitudes (const float* input,
     if (input == nullptr || output == nullptr || numBins <= 0)
         return;
 
-    const float b = juce::jlimit (0.0f, 1.0f, blur01);
-    // Low blur: 0–1 light diffusion passes; high: up to ~6
-    const int passes = static_cast<int> (std::lround (b * b * 6.0f));
-    if (passes <= 0)
+    const float octaves = blurOctavesFromAmount (blur01);
+    if (octaves < 1.0e-6f || ! logSmoother_.isPrepared())
     {
         if (output != input)
             std::copy (input, input + numBins, output);
         return;
     }
 
-    const float* src = input;
-    float* dst = diffuseScratchA_.data();
-    float* alt = diffuseScratchB_.data();
+    logSmoother_.setWidth (octaves);
+    logSmoother_.process (input, output, numBins, prefixScratch_.data());
 
-    for (int p = 0; p < passes; ++p)
-    {
-        // 3-tap: 0.2 | 0.6 | 0.2
-        dst[0] = 0.8f * src[0] + 0.2f * src[1];
-        for (int k = 1; k < numBins - 1; ++k)
-            dst[k] = 0.2f * src[k - 1] + 0.6f * src[k] + 0.2f * src[k + 1];
-        dst[numBins - 1] = 0.8f * src[numBins - 1] + 0.2f * src[numBins - 2];
-
-        src = dst;
-        std::swap (dst, alt);
-    }
-
-    // Preserve RMS vs original input
     const double eIn = sumSq (input, numBins);
-    const double eOut = sumSq (src, numBins);
+    const double eOut = sumSq (output, numBins);
     float scale = 1.0f;
     if (eIn > static_cast<double> (kSilenceEnergyThresh)
         && eOut > static_cast<double> (kEnergyEpsilon))
@@ -501,7 +496,7 @@ void SpectralModeProcessor::diffuseMagnitudes (const float* input,
     }
 
     for (int k = 0; k < numBins; ++k)
-        output[k] = src[k] * scale;
+        output[k] *= scale;
 }
 
 float SpectralModeProcessor::computeMixAmount (SpectralMode mode,
@@ -699,7 +694,8 @@ void SpectralModeProcessor::applyShadowPath (float* magnitudes,
 
     applyAbsoluteCeiling (magnitudes, numBins, channelIndex);
     applyPerBinContrastLimiter (magnitudes, numBins, kContrastLimitDb,
-                                limiterScratch_.data(), prefixScratch_.data());
+                                limiterScratch_.data(), prefixScratch_.data(),
+                                &contrastSmoother_);
     sanitizeMagnitudes (magnitudes, numBins);
 }
 
@@ -724,8 +720,8 @@ void SpectralModeProcessor::updateEraseFamiliarity (const float* memoryMagnitude
         return;
 
     // Broad envelope for relative prominence (repetition ≠ loudness)
-    boxBlurMagnitudes (memoryMagnitudes, broadEnvScratch_.data(), numBins,
-                       kEraseBroadEnvRadius, prefixScratch_.data());
+    logSmoother_.setWidth (kEraseBroadEnvOctaves);
+    logSmoother_.process (memoryMagnitudes, broadEnvScratch_.data(), numBins, prefixScratch_.data());
 
     const float memSec = juce::jlimit (constants::memoryLengthMinSec,
                                        constants::memoryLengthMaxSec,
@@ -784,12 +780,9 @@ void SpectralModeProcessor::applyErasePath (float* magnitudes,
     // Moderate: ~-8 dB familiar; high: ~-22 dB (deeper carve on fully familiar bins)
     const float maxEraseDb = 12.0f + mappedInf * 18.0f;
 
-    const int blurExtra = blurRadiusFromAmount (params.blur, 28);
-    const int maskRadius = kEraseMaskBaseRadius + blurExtra;
-
     // Current relative prominence for mask comparison
-    boxBlurMagnitudes (magnitudes, broadEnvScratch_.data(), numBins,
-                       kEraseBroadEnvRadius, prefixScratch_.data());
+    logSmoother_.setWidth (kEraseBroadEnvOctaves);
+    logSmoother_.process (magnitudes, broadEnvScratch_.data(), numBins, prefixScratch_.data());
 
 #if defined (AFTERIMAGE_DEBUG_AUDITION)
     if (kDebugAudition == DebugAudition::MemoryOnly)
@@ -818,11 +811,11 @@ void SpectralModeProcessor::applyErasePath (float* magnitudes,
     }
 
     // Blur primarily on the suppression mask
-    boxBlurMagnitudes (eraseMaskScratch_.data(),
-                       eraseMaskSmoothScratch_.data(),
-                       numBins,
-                       maskRadius,
-                       prefixScratch_.data());
+    logSmoother_.setWidth (blurOctavesFromAmount (params.blur));
+    logSmoother_.process (eraseMaskScratch_.data(),
+                          eraseMaskSmoothScratch_.data(),
+                          numBins,
+                          prefixScratch_.data());
 
     auto& maskTemporal = eraseMaskSmoothed_[ch];
 
@@ -854,7 +847,8 @@ void SpectralModeProcessor::applyErasePath (float* magnitudes,
 
     applyAbsoluteCeiling (magnitudes, numBins, channelIndex);
     applyPerBinContrastLimiter (magnitudes, numBins, kContrastLimitDb,
-                                limiterScratch_.data(), prefixScratch_.data());
+                                limiterScratch_.data(), prefixScratch_.data(),
+                                &contrastSmoother_);
     sanitizeMagnitudes (magnitudes, numBins);
 }
 
@@ -912,27 +906,15 @@ void SpectralModeProcessor::applyMergePath (float* magnitudes,
         std::copy (magnitudes, magnitudes + numBins, mergeCurProfileScratch_.begin());
     }
 
-    // Envelope radius: Blur is the signature control
-    const int envRadius = kMergeEnvBaseRadius + blurRadiusFromAmount (blur, 40);
+    // Envelope width: Blur maps 1/2 → 2 octaves constant-Q
+    const float envOctaves = kMergeEnvBaseOctaves
+                             + blur * (kMergeEnvMaxOctaves - kMergeEnvBaseOctaves);
 
-    boxBlurMagnitudes (mergeCurProfileScratch_.data(), mergeCurEnvScratch_.data(),
-                       numBins, envRadius, prefixScratch_.data());
-    boxBlurMagnitudes (memoryMagnitudes, mergeHistEnvScratch_.data(),
-                       numBins, envRadius, prefixScratch_.data());
-
-    // Optional extra multi-pass on envelopes at high Blur
-    if (blur > 0.35f)
-    {
-        const int extra = blurRadiusFromAmount ((blur - 0.35f) / 0.65f, 18);
-        boxBlurMagnitudes (mergeCurEnvScratch_.data(), diffuseScratchA_.data(),
-                           numBins, extra, prefixScratch_.data());
-        std::copy (diffuseScratchA_.begin(), diffuseScratchA_.begin() + numBins,
-                   mergeCurEnvScratch_.begin());
-        boxBlurMagnitudes (mergeHistEnvScratch_.data(), diffuseScratchA_.data(),
-                           numBins, extra, prefixScratch_.data());
-        std::copy (diffuseScratchA_.begin(), diffuseScratchA_.begin() + numBins,
-                   mergeHistEnvScratch_.begin());
-    }
+    logSmoother_.setWidth (envOctaves);
+    logSmoother_.process (mergeCurProfileScratch_.data(), mergeCurEnvScratch_.data(),
+                          numBins, prefixScratch_.data());
+    logSmoother_.process (memoryMagnitudes, mergeHistEnvScratch_.data(),
+                          numBins, prefixScratch_.data());
 
 #if defined (AFTERIMAGE_DEBUG_AUDITION)
     if (kDebugAudition == DebugAudition::MemoryOnly)
@@ -977,7 +959,8 @@ void SpectralModeProcessor::applyMergePath (float* magnitudes,
 
     applyAbsoluteCeiling (magnitudes, numBins, channelIndex);
     applyPerBinContrastLimiter (magnitudes, numBins, kContrastLimitDb,
-                                limiterScratch_.data(), prefixScratch_.data());
+                                limiterScratch_.data(), prefixScratch_.data(),
+                                &contrastSmoother_);
     sanitizeMagnitudes (magnitudes, numBins);
 }
 

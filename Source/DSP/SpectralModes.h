@@ -4,6 +4,7 @@
 #include "SpectralHistoryBuffer.h"
 #include "SpectralMemoryProfile.h"
 #include "SpectralTail.h"
+#include "LogSmoother.h"
 #include "../Utilities/Constants.h"
 
 #include <vector>
@@ -77,7 +78,14 @@ inline constexpr float kMaxTransientReduction = 0.65f;
 /** Spectral-flux → transientStrength calibration. */
 inline constexpr float kTransientFluxCalibration = 3.2f;
 
-/** Nonlinear blur radius: round(blur² * maxRadius). blur=0 → 0. */
+/** Map Blur 0→1 to constant-Q width in octaves (mode paths). */
+[[nodiscard]] inline float blurOctavesFromAmount (float blur01) noexcept
+{
+    const float b = blur01 < 0.0f ? 0.0f : (blur01 > 1.0f ? 1.0f : blur01);
+    return b * 1.5f;
+}
+
+/** Nonlinear blur radius: round(blur² * maxRadius). blur=0 → 0. Kept for box-blur tests. */
 [[nodiscard]] int blurRadiusFromAmount (float blur01,
                                         int maxRadius = constants::maxBlurRadiusBins) noexcept;
 
@@ -99,7 +107,8 @@ void applyPerBinContrastLimiter (float* magnitudes,
                                  int numBins,
                                  float maxRelativePeakDb,
                                  float* scratchNeighborhood,
-                                 float* prefixScratch) noexcept;
+                                 float* prefixScratch,
+                                 LogSmoother* logSmoother = nullptr) noexcept;
 
 /** Artifact metric: max |mag[k]/mag[k±1]| / mean neighborhood (linear). */
 [[nodiscard]] float maxNeighborBinContrast (const float* magnitudes, int numBins) noexcept;
@@ -264,6 +273,8 @@ private:
     float modeCrossfade_ = 1.0f;
 
     SpectralTail spectralTail_;
+    LogSmoother logSmoother_;
+    LogSmoother contrastSmoother_; // fixed 1/12 octave for contrast limiter
     bool shadowComplexWrite_ = false;
     float lastShadowTailGain_ = 0.0f;
     float lastShadowDiffusion_ = 0.0f;

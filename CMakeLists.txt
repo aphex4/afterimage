@@ -93,7 +93,8 @@ set(AFTERIMAGE_DSP_SOURCES
     Source/DSP/SpectralHistoryBuffer.cpp
     Source/DSP/SpectralMemoryProfile.cpp
     Source/DSP/SpectralModes.cpp
-    Source/DSP/SpectralTail.cpp)
+    Source/DSP/SpectralTail.cpp
+    Source/DSP/LogSmoother.cpp)
 
 set(AFTERIMAGE_MONOCYPHER_SOURCES
     Source/Licensing/ThirdParty/monocypher/monocypher.c
