@@ -81,12 +81,18 @@ void SpectralTail::recomputeDecayCoeffs (int channelIndex, float rt60Seconds, fl
                              / static_cast<float> (std::max (1.0, sampleRate_));
     const float rt60 = std::max (0.02f, rt60Seconds);
     const float hf = clampf (hfDampRatio, 0.05f, 1.0f);
-    const int last = std::max (1, numBins_ - 1);
+
+    // Log-frequency curve anchored at 100 Hz so mid-treble (1–6 kHz) is damped.
+    const float binHz = static_cast<float> (sampleRate_) / static_cast<float> (constants::fftSize);
+    const float refHz = 100.0f;
+    const float nyquistHz = static_cast<float> (sampleRate_) * 0.5f;
+    const float logSpan = std::log2 (std::max (2.0f, nyquistHz / refHz));
 
     for (int k = 0; k < numBins_; ++k)
     {
-        const float freqNorm = static_cast<float> (k) / static_cast<float> (last);
-        const float rt60k = rt60 * std::pow (hf, freqNorm);
+        const float fHz = std::max (refHz, static_cast<float> (k) * binHz);
+        const float logNorm = clampf (std::log2 (fHz / refHz) / logSpan, 0.0f, 1.0f);
+        const float rt60k = rt60 * std::pow (hf, logNorm);
         coeffs[static_cast<std::size_t> (k)] =
             std::exp (-kLn1000 * hopSeconds / std::max (0.02f, rt60k));
     }

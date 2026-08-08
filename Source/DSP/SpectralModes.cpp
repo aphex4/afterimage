@@ -682,7 +682,8 @@ void SpectralModeProcessor::applyShadowPath (float* magnitudes,
     SpectralTailParams tp;
     tp.rt60Seconds = juce::jlimit (0.1f, 30.0f,
                                    memSec * std::pow (4.0f, 1.0f - 2.0f * forget));
-    tp.hfDampRatio = 0.22f;
+    // Higher Blur → darker / more diffuse HF damping (log curve in SpectralTail).
+    tp.hfDampRatio = 0.30f - blur * 0.20f;
     {
         const float x = juce::jlimit (0.0f, 1.0f, params.influence);
         float inject = (x <= 0.0f) ? 0.0f
