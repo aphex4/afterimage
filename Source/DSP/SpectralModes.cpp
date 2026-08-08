@@ -705,10 +705,8 @@ void SpectralModeProcessor::applyShadowPath (float* magnitudes,
 
     const float mixAmount = mapInfluenceForMode (SpectralMode::Shadow, params.influence);
     const float olaComp = 1.0f + tp.diffusion * (constants::incoherentOlaCompensation - 1.0f);
-    // Synthesis make-up: feedback tails read quieter than coherent dry under WOLA.
-    constexpr float kTailSynthMakeup = 2.5f;
     lastShadowDiffusion_ = tp.diffusion;
-    lastShadowTailGain_ = juce::jlimit (0.0f, 16.0f, mixAmount * olaComp * kTailSynthMakeup);
+    lastShadowTailGain_ = juce::jlimit (0.0f, 16.0f, mixAmount * olaComp);
     shadowComplexWrite_ = leaveDryForComplexWrite;
 
     const float* tailMag = spectralTail_.getTailMagnitudes (channelIndex);

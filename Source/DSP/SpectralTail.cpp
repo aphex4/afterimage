@@ -30,6 +30,7 @@ void SpectralTail::prepare (int numBins, double sampleRate, int hopSize, int num
     const auto chN = static_cast<std::size_t> (numChannels_);
     const auto binN = static_cast<std::size_t> (numBins_);
 
+    tailPow_.assign (chN, std::vector<float> (binN, 0.0f));
     tailMag_.assign (chN, std::vector<float> (binN, 0.0f));
     ghostPhase_.assign (chN, std::vector<float> (binN, 0.0f));
     renderPhase_.assign (chN, std::vector<float> (binN, 0.0f));
@@ -59,6 +60,8 @@ void SpectralTail::prepare (int numBins, double sampleRate, int hopSize, int num
 
 void SpectralTail::reset() noexcept
 {
+    for (auto& v : tailPow_)
+        std::fill (v.begin(), v.end(), 0.0f);
     for (auto& v : tailMag_)
         std::fill (v.begin(), v.end(), 0.0f);
     for (auto& v : ghostPhase_)
@@ -115,6 +118,7 @@ void SpectralTail::processHop (int channelIndex,
         return;
 
     const auto ch = static_cast<std::size_t> (channelIndex);
+    auto& pow = tailPow_[ch];
     auto& mag = tailMag_[ch];
     auto& gphase = ghostPhase_[ch];
     auto& rphase = renderPhase_[ch];
@@ -166,18 +170,21 @@ void SpectralTail::processHop (int channelIndex,
         const float omega = omegaHeld[i];
         prevPh[i] = inPh;
 
-        // (b)/(c) Frequency-dependent decay + accumulate
+        // (b)/(c) Power-domain decay + accumulate (incoherent energy add)
         const float decay = coeffs[i];
         const float d = params.freeze ? 1.0f : decay;
-        const float inject = params.freeze ? 0.0f : params.injectGain * (1.0f - decay);
+        const float d2 = d * d;
+        const float injectPow = params.freeze
+                                    ? 0.0f
+                                    : params.injectGain * params.injectGain * (1.0f - d2);
 
-        const float prevMag = mag[i];
-        mag[i] = prevMag * d + inMag * inject;
-        if (mag[i] < kDenormalFlush)
-            mag[i] = 0.0f;
+        const float prevPow = pow[i];
+        pow[i] = prevPow * d2 + inMag * inMag * injectPow;
+        if (pow[i] < kDenormalFlush)
+            pow[i] = 0.0f;
 
         // (e) Initialise ghost phase from input on first injection
-        if (prevMag < kDenormalFlush && mag[i] >= kDenormalFlush)
+        if (prevPow < kDenormalFlush && pow[i] >= kDenormalFlush)
             gphase[i] = inPh;
 
         // (d) Clean propagated phase — diffusion is a non-accumulating render offset.
@@ -192,20 +199,26 @@ void SpectralTail::processHop (int channelIndex,
         rphase[i] = princarg (gphase[i] + offset);
     }
 
-    // Cross-bin constant-Q diffusion on the accumulator (compounds across hops).
+    // Cross-bin constant-Q diffusion on power (compounds across hops).
     if (params.spectralDiffusion > 1.0e-4f
         && static_cast<int> (diffuseScratch_.size()) >= numBins_
         && static_cast<int> (prefixScratch_.size()) >= numBins_ + 1)
     {
         smoother_.setWidth (params.diffusionOctaves);
-        smoother_.process (mag.data(), diffuseScratch_.data(), numBins_, prefixScratch_.data());
+        smoother_.process (pow.data(), diffuseScratch_.data(), numBins_, prefixScratch_.data());
 
         const float s = clampf (params.spectralDiffusion, 0.0f, 1.0f);
         for (int k = 0; k < numBins_; ++k)
         {
             const auto i = static_cast<std::size_t> (k);
-            mag[i] = mag[i] * (1.0f - s) + diffuseScratch_[i] * s;
+            pow[i] = pow[i] * (1.0f - s) + diffuseScratch_[i] * s;
         }
+    }
+
+    for (int k = 0; k < numBins_; ++k)
+    {
+        const auto i = static_cast<std::size_t> (k);
+        mag[i] = std::sqrt (pow[i]);
     }
 
     hasPrevPhase_[ch] = true;

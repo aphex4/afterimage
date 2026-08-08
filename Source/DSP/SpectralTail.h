@@ -51,7 +51,8 @@ private:
     int numChannels_ = 2;
     double sampleRate_ = 44100.0;
 
-    std::vector<std::vector<float>> tailMag_;
+    std::vector<std::vector<float>> tailPow_;      // authoritative power-domain accumulator
+    std::vector<std::vector<float>> tailMag_;      // sqrt(tailPow_) for render
     std::vector<std::vector<float>> ghostPhase_;   // clean propagated phase
     std::vector<std::vector<float>> renderPhase_;  // ghost + per-hop diffusion offset
     std::vector<std::vector<float>> prevInputPhase_;
