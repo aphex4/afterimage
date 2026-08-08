@@ -79,8 +79,7 @@ inline constexpr const char* gainMatch =
 
 inline constexpr const char* freeze =
     "FREEZE\n"
-    "Stops updating the remembered audio.\n"
-    "The current memory stays available until Freeze is turned off.";
+    "Captures a short, stabilized moment of recent audio and holds it as the current memory.";
 
 inline constexpr const char* bypass =
     "BYPASS\n"
@@ -89,18 +88,15 @@ inline constexpr const char* bypass =
 
 inline constexpr const char* shadow =
     "SHADOW\n"
-    "Adds remembered harmonics behind the current sound.\n"
-    "Use it to create ghost-like layers and evolving textures.";
+    "Creates a smooth spectral tail from earlier audio. It behaves like a delay or reverb made from remembered frequencies.";
 
 inline constexpr const char* merge =
     "MERGE\n"
-    "Transfers the tonal character of the remembered sound onto the current sound.\n"
-    "It reshapes the sound without replaying the original audio.";
+    "Blurs the current sound together with remembered audio. Higher settings create a softer, more blended spectral texture.";
 
 inline constexpr const char* erase =
     "ERASE\n"
-    "Removes frequencies that the plugin recognizes as familiar.\n"
-    "Repeated sounds become thinner while new material stays clear.";
+    "Reduces frequencies that keep repeating over time. New material stays clearer while familiar content is gradually removed.";
 
 inline constexpr const char* memoryWell =
     "MEMORY WELL\n"

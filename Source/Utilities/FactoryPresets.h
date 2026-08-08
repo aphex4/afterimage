@@ -29,41 +29,32 @@ struct Preset
 };
 
 /**
-    Factory bank after audible retune.
+    Factory bank after spectral-memory redesign.
 
-    Categories (subtle / medium / extreme) — every preset is intentional.
-    Default host program (index 0 / Soft Shadow) is immediately demonstrative
-    with Influence ~40% and Mix 100%. Parameter IDs unchanged; saved sessions
-    keep their stored values. APVTS defaults updated to match Soft Shadow
-    starting direction (documented in HANDOFF).
+    Categories demonstrate each mode immediately at moderate settings.
+    Soft Shadow remains program 0 / APVTS default direction.
 */
 inline constexpr Preset kPresets[] = {
-    // --- Subtle ---
-    // Demonstrative default: clear ghost on chord changes within a few seconds.
+    // --- Shadow ---
     { "Soft Shadow",       0, 3.0f, 0.40f, 0.40f, 0.25f, 0.12f, 0.35f, false, 0.00f, 0.0f, 1.0f },
-    // Merge: pink/pad carrier inherits formant-like past identity
-    { "Gentle Morph",      2, 3.5f, 0.45f, 0.42f, 0.22f, 0.28f, 0.38f, false, 0.00f, 0.0f, 1.0f },
-    // Erase: light progressive hollow on loops
-    { "Light Carve",       1, 2.8f, 0.28f, 0.45f, 0.32f, 0.14f, 0.42f, false, 0.00f, 0.0f, 1.0f },
+    { "Spectral Hall",     0, 5.5f, 0.52f, 0.58f, 0.18f, 0.48f, 0.40f, false, 0.00f, 0.0f, 1.0f },
+    { "Vocal Afterglow",   0, 3.2f, 0.35f, 0.52f, 0.28f, 0.22f, 0.55f, false, 0.00f, 0.0f, 1.0f },
+    { "Memory Delay",      0, 4.0f, 0.62f, 0.55f, 0.22f, 0.10f, 0.32f, false, 0.00f, 0.0f, 1.0f },
+    { "Ghost Pad",         0, 4.5f, 0.48f, 0.50f, 0.30f, 0.42f, 0.45f, false, 0.08f, 0.0f, 0.95f },
+    { "Frozen Choir",      0, 4.0f, 0.45f, 0.62f, 0.15f, 0.35f, 0.30f, true,  0.00f, 0.0f, 1.0f },
 
-    // --- Medium ---
-    { "Deep Ghost",        0, 5.0f, 0.58f, 0.55f, 0.22f, 0.22f, 0.35f, false, 0.00f, 0.0f, 1.0f },
-    // Merge: chord/resonance identity transfer
-    { "Memory Transfer",   2, 4.5f, 0.55f, 0.55f, 0.25f, 0.32f, 0.36f, false, 0.05f, 0.0f, 1.0f },
-    // Erase: loop progressively eats familiar spectrum
-    { "Repetition Eater",  1, 3.5f, 0.32f, 0.58f, 0.28f, 0.18f, 0.48f, false, 0.00f, 0.0f, 1.0f },
+    // --- Erase ---
+    { "Loop Cleaner",      1, 3.0f, 0.28f, 0.48f, 0.30f, 0.16f, 0.50f, false, 0.00f, 0.0f, 1.0f },
+    { "Resonance Memory",  1, 4.0f, 0.40f, 0.55f, 0.22f, 0.28f, 0.42f, false, 0.00f, 0.0f, 1.0f },
+    { "Hollow Repeat",     1, 3.5f, 0.35f, 0.65f, 0.25f, 0.22f, 0.45f, false, 0.00f, -0.5f, 1.0f },
+    { "Spectral Dust",     1, 4.5f, 0.42f, 0.70f, 0.20f, 0.38f, 0.35f, true,  0.00f, -0.5f, 1.0f },
 
-    // --- Extreme ---
-    { "Frozen Afterimage", 0, 4.5f, 0.55f, 0.68f, 0.12f, 0.28f, 0.25f, true,  0.00f, 0.0f, 1.0f },
-    // Erase: frozen spectral stencil hollow
-    { "Spectral Hollow",   1, 4.0f, 0.40f, 0.72f, 0.22f, 0.30f, 0.35f, true,  0.00f, -0.5f, 1.0f },
-    // Merge: extreme past-life formant/landmark impose
-    { "Past Life",         2, 6.0f, 0.68f, 0.78f, 0.35f, 0.42f, 0.28f, false, 0.12f, -1.0f, 1.0f },
-
-    // --- Creative extras ---
-    { "Drift Memory",      0, 3.5f, 0.45f, 0.50f, 0.30f, 0.22f, 0.40f, false, 0.65f, 0.0f, 1.0f },
-    { "Halo Pad",          0, 4.0f, 0.35f, 0.48f, 0.40f, 0.50f, 0.55f, false, 0.12f, 0.0f, 0.90f },
-    { "Transient Shadow",  0, 2.0f, 0.28f, 0.45f, 0.18f, 0.05f, 0.85f, false, 0.00f, 0.0f, 1.0f },
+    // --- Merge ---
+    { "Melt",              2, 3.5f, 0.45f, 0.48f, 0.22f, 0.45f, 0.40f, false, 0.00f, 0.0f, 1.0f },
+    { "Vocal Blur",        2, 3.0f, 0.38f, 0.52f, 0.25f, 0.55f, 0.50f, false, 0.00f, 0.0f, 1.0f },
+    { "Past Into Present", 2, 4.5f, 0.55f, 0.58f, 0.28f, 0.38f, 0.36f, false, 0.05f, 0.0f, 1.0f },
+    { "Spectral Fog",      2, 5.0f, 0.50f, 0.62f, 0.32f, 0.68f, 0.32f, false, 0.10f, -0.5f, 1.0f },
+    { "Memory Wash",       2, 6.0f, 0.60f, 0.70f, 0.35f, 0.72f, 0.28f, false, 0.12f, -1.0f, 0.95f },
 };
 
 inline constexpr int kNumPresets = static_cast<int> (sizeof (kPresets) / sizeof (kPresets[0]));

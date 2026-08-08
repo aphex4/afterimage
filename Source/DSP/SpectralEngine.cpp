@@ -42,11 +42,14 @@ void SpectralEngine::prepare (double sampleRate, int maxBlockSize, int numChanne
     modes_.prepare (constants::numBins, sampleRate, numChannels_);
     workingFrame_.prepare (constants::numBins);
     analysisForHistory_.prepare (constants::numBins);
-    historyMagsScratch_.assign (static_cast<std::size_t> (constants::numBins), 0.0f);
     frameSmoothers_.prepareFrameSmoothers (sampleRate);
+    tapProfileScratch_.prepare (constants::numBins, sampleRate, stft_.getHopSize());
 
     histories_.clear();
     histories_.reserve (static_cast<std::size_t> (numChannels_));
+    liveProfiles_.assign (static_cast<std::size_t> (numChannels_), {});
+    frozenProfiles_.assign (static_cast<std::size_t> (numChannels_), {});
+    effectiveProfiles_.assign (static_cast<std::size_t> (numChannels_), {});
     previousMagnitudes_.assign (static_cast<std::size_t> (numChannels_), {});
     hasPreviousFrame_.assign (static_cast<std::size_t> (numChannels_), false);
     frameCounters_.assign (static_cast<std::size_t> (numChannels_), 0);
@@ -56,9 +59,18 @@ void SpectralEngine::prepare (double sampleRate, int maxBlockSize, int numChanne
         auto hist = std::make_unique<SpectralHistoryBuffer>();
         hist->prepare (sampleRate, stft_.getHopSize(), constants::memoryLengthMaxSec);
         histories_.push_back (std::move (hist));
+
+        liveProfiles_[static_cast<std::size_t> (c)].prepare (
+            constants::numBins, sampleRate, stft_.getHopSize());
+        frozenProfiles_[static_cast<std::size_t> (c)].prepare (
+            constants::numBins, sampleRate, stft_.getHopSize());
+        effectiveProfiles_[static_cast<std::size_t> (c)].prepare (
+            constants::numBins, sampleRate, stft_.getHopSize());
         previousMagnitudes_[static_cast<std::size_t> (c)].assign (
             static_cast<std::size_t> (constants::numBins), 0.0f);
     }
+
+    modes_.setTapProfileScratch (&tapProfileScratch_);
 
     stft_.setSpectrumCallback (&SpectralEngine::spectrumCallback, this);
     clearHistoryRequested_.store (false, std::memory_order_relaxed);
@@ -73,11 +85,17 @@ void SpectralEngine::reset()
     modes_.setMode (currentMode_);
     workingFrame_.clear();
     analysisForHistory_.clear();
-    std::fill (historyMagsScratch_.begin(), historyMagsScratch_.end(), 0.0f);
     std::fill (frameCounters_.begin(), frameCounters_.end(), 0);
 
     for (auto& hist : histories_)
         hist->reset();
+
+    for (auto& p : liveProfiles_)
+        p.clear();
+    for (auto& p : frozenProfiles_)
+        p.clear();
+    for (auto& p : effectiveProfiles_)
+        p.clear();
 
     for (auto& prev : previousMagnitudes_)
         std::fill (prev.begin(), prev.end(), 0.0f);
@@ -86,6 +104,9 @@ void SpectralEngine::reset()
 
     wanderOffset_ = 0.0f;
     wanderRng_ = 0xA5F1C3E9u;
+    freezeEngaged_ = false;
+    freezeWasTarget_ = false;
+    freezeCrossfade_ = 1.0f;
 }
 
 void SpectralEngine::releaseResources()
@@ -133,6 +154,18 @@ void SpectralEngine::clearHistoryOnAudioThread() noexcept
 
     std::fill (hasPreviousFrame_.begin(), hasPreviousFrame_.end(), false);
     std::fill (frameCounters_.begin(), frameCounters_.end(), 0);
+
+    for (auto& p : liveProfiles_)
+        p.clear();
+    for (auto& p : frozenProfiles_)
+        p.clear();
+    for (auto& p : effectiveProfiles_)
+        p.clear();
+
+    freezeEngaged_ = false;
+    freezeWasTarget_ = freezeTarget_;
+    freezeCrossfade_ = freezeTarget_ ? 1.0f : 0.0f;
+
     modes_.clearEraseMemory();
     viz_.storeHistoryFill (0.0f);
 }
@@ -149,6 +182,87 @@ const SpectralHistoryBuffer& SpectralEngine::getHistory (int channel) const noex
     jassert (! histories_.empty());
     const int idx = juce::jlimit (0, static_cast<int> (histories_.size()) - 1, channel);
     return *histories_[static_cast<std::size_t> (idx)];
+}
+
+const SpectralMemoryProfile& SpectralEngine::getEffectiveMemoryProfile (int channel) const noexcept
+{
+    jassert (! effectiveProfiles_.empty());
+    const int idx = juce::jlimit (0, static_cast<int> (effectiveProfiles_.size()) - 1, channel);
+    return effectiveProfiles_[static_cast<std::size_t> (idx)];
+}
+
+void SpectralEngine::updateFreezeState (bool freezeTarget, int hopSamples) noexcept
+{
+    const bool rising = freezeTarget && ! freezeWasTarget_;
+    freezeWasTarget_ = freezeTarget;
+    freezeEngaged_ = freezeTarget;
+
+    if (rising)
+    {
+        // Capture stabilized recent profiles on Freeze press (all channels).
+        MemoryProfileOptions opts;
+        opts.windowMs = constants::freezeCaptureWindowMs;
+        opts.applyStability = true;
+
+        for (int c = 0; c < numChannels_; ++c)
+        {
+            const auto& hist = *histories_[static_cast<std::size_t> (c)];
+            frozenProfiles_[static_cast<std::size_t> (c)].captureRecent (
+                hist, constants::freezeCaptureWindowMs, opts);
+        }
+
+        modes_.onFreezeEngaged();
+        freezeCrossfade_ = 0.0f; // start morph live → frozen
+    }
+
+    if (! freezeTarget)
+    {
+        freezeCrossfade_ = 0.0f;
+        return;
+    }
+
+    if (freezeCrossfade_ >= 1.0f - 1.0e-4f)
+    {
+        freezeCrossfade_ = 1.0f;
+        return;
+    }
+
+    const float hopSec = static_cast<float> (std::max (1, hopSamples))
+                         / static_cast<float> (std::max (1.0, sampleRate_));
+    const float fadeSec = constants::freezeCrossfadeMs * 0.001f;
+    const float alpha = hopSec / std::max (1.0e-4f, fadeSec);
+    freezeCrossfade_ = std::min (1.0f, freezeCrossfade_ + alpha);
+}
+
+void SpectralEngine::buildEffectiveProfile (int channelIndex, float recallAge01) noexcept
+{
+    const auto ch = static_cast<std::size_t> (channelIndex);
+    auto& hist = *histories_[ch];
+    auto& live = liveProfiles_[ch];
+    auto& frozen = frozenProfiles_[ch];
+    auto& effective = effectiveProfiles_[ch];
+
+    MemoryProfileOptions opts;
+    opts.windowMs = constants::memoryProfileWindowMs;
+    opts.applyStability = true;
+
+    if (! freezeEngaged_ || freezeCrossfade_ < 1.0f - 1.0e-4f)
+        live.buildFromHistory (hist, recallAge01, opts);
+
+    if (! freezeEngaged_)
+    {
+        effective.copyFrom (live);
+        return;
+    }
+
+    if (freezeCrossfade_ >= 1.0f - 1.0e-4f)
+    {
+        effective.copyFrom (frozen);
+        return;
+    }
+
+    // Crossfade live recall profile → frozen capture
+    effective.lerpFrom (live, frozen, freezeCrossfade_);
 }
 
 void SpectralEngine::publishVisualization (int channelIndex) noexcept
@@ -180,7 +294,6 @@ void SpectralEngine::publishVisualization (int channelIndex) noexcept
     snap.sequence = ++vizSequence_;
     snap.numSeeds = 0;
 
-    // Peak-bin particle seeds for Memory Well (ch0 only; no alloc).
     const auto& mags = workingFrame_.magnitudes;
     const int numBins = static_cast<int> (mags.size());
     float maxMag = 1.0e-8f;
@@ -212,7 +325,7 @@ void SpectralEngine::publishVisualization (int channelIndex) noexcept
 
         auto& seed = snap.seeds[snap.numSeeds++];
         const float freqLin = static_cast<float> (peakBin) / static_cast<float> (juce::jmax (1, numBins - 1));
-        seed.freqNorm = std::sqrt (freqLin); // mild perceptual bias toward highs
+        seed.freqNorm = std::sqrt (freqLin);
         seed.magnitude = juce::jlimit (0.0f, 1.0f, peakMag / maxMag);
         seed.transient = workingFrame_.transientStrength;
         seed.centroidNorm = centroidNorm;
@@ -262,6 +375,8 @@ void SpectralEngine::onSpectrum (float* interleavedFftData, int fftSize, int cha
                                                          hopParams_.recallPosition,
                                                          hopParams_.randomRecall,
                                                          hopSec);
+
+        updateFreezeState (freezeTarget_, stft_.getHopSize());
     }
 
     auto& hist = *histories_[static_cast<std::size_t> (channelIndex)];
@@ -293,7 +408,6 @@ void SpectralEngine::onSpectrum (float* interleavedFftData, int fftSize, int cha
     const float raw = (denom > 1.0e-9) ? static_cast<float> (flux / denom) : 0.0f;
     workingFrame_.transientStrength = juce::jlimit (0.0f, 1.0f, raw * kTransientFluxCalibration);
 
-    // Keep unmodified analysis for history (Shadow must not pollute the memory well).
     analysisForHistory_.copyFrom (workingFrame_);
 
     ModeParams params = hopParams_;
@@ -303,35 +417,49 @@ void SpectralEngine::onSpectrum (float* interleavedFftData, int fftSize, int cha
 
     if (hasHistory)
     {
-        // READ history BEFORE push — age 0 is newest committed frame, not this write.
-        hist.getInterpolatedMagnitudes (params.recallAge01,
-                                        historyMagsScratch_.data(),
-                                        numBins);
+        // READ / profile BEFORE push — age 0 is newest committed frame, not this write.
+        buildEffectiveProfile (channelIndex, params.recallAge01);
+
+        const auto& profile = effectiveProfiles_[static_cast<std::size_t> (channelIndex)];
 
         const bool wroteSpectrum = modes_.process (currentMode_,
                                                    workingFrame_,
                                                    params,
-                                                   historyMagsScratch_.data(),
+                                                   profile.getMagnitudes(),
+                                                   &hist,
                                                    channelIndex,
                                                    stft_.getHopSize());
 
         if (wroteSpectrum)
         {
-            writeInterleavedFromMagnitudePhase (interleavedFftData,
-                                                fftSize,
-                                                workingFrame_.magnitudes.data(),
-                                                workingFrame_.phases.data(),
-                                                numBins);
+            if (currentMode_ == SpectralMode::Shadow
+                && modes_.getShadowPhaseMode() == ShadowPhaseMode::PropagatedGhostPhase)
+            {
+                writeInterleavedAdditiveGhost (interleavedFftData,
+                                               fftSize,
+                                               workingFrame_.magnitudes.data(),
+                                               workingFrame_.phases.data(),
+                                               modes_.getLastShadowTail(),
+                                               modes_.getGhostPhases (channelIndex),
+                                               numBins);
+            }
+            else
+            {
+                writeInterleavedFromMagnitudePhase (interleavedFftData,
+                                                    fftSize,
+                                                    workingFrame_.magnitudes.data(),
+                                                    workingFrame_.phases.data(),
+                                                    numBins);
+            }
         }
     }
     else if (channelIndex == 0)
     {
-        // Empty history: identity STFT; still advance mode crossfade.
         modes_.setMode (currentMode_);
         modes_.tickModeCrossfade (stft_.getHopSize());
     }
 
-    // Push unmodified analysis (Freeze skips via beginWriteFrame — no invalid refs).
+    // Push unmodified analysis (Freeze skips via beginWriteFrame).
     if (SpectralFrame* slot = hist.beginWriteFrame())
     {
         slot->copyFrom (analysisForHistory_);

@@ -3,11 +3,12 @@
 
 #include "DSP/SpectralEngine.h"
 #include "DSP/SpectralHistoryBuffer.h"
+#include "DSP/SpectralMemoryProfile.h"
 #include "DSP/SpectralModes.h"
 #include "DSP/STFTProcessor.h"
 #include "DSP/SpectralFrame.h"
 #include "Utilities/Constants.h"
-#include "EffectStrengthMeasure.h"
+#include "SpectralFixtures.h"
 #include "EffectStrengthMeasure.h"
 
 #include <cmath>
@@ -147,6 +148,267 @@ static void testHistoryInterpolationFocused()
 }
 
 //==============================================================================
+static void testSpectralMemoryProfile()
+{
+    std::cout << "SpectralMemoryProfile temporal averaging...\n";
+
+    constexpr double sr = 48000.0;
+    SpectralHistoryBuffer hist;
+    hist.prepare (sr, constants::hopSize, 2.0f);
+
+    SpectralFrame frame;
+    frame.prepare (constants::numBins);
+
+    // Fill ~500 ms of history with a stable tone + one spike frame
+    const int frames = 50;
+    for (int i = 0; i < frames; ++i)
+    {
+        frame.clear();
+        frame.magnitudes[10] = 1.0f;
+        frame.magnitudes[20] = 0.5f;
+        if (i == frames - 5)
+            frame.magnitudes[100] = 20.0f; // transient spike
+        hist.pushFrame (frame);
+    }
+
+    SpectralMemoryProfile profile;
+    profile.prepare (constants::numBins, sr, constants::hopSize);
+
+    MemoryProfileOptions opts;
+    opts.windowMs = 200.0f;
+    opts.applyStability = true;
+    profile.buildFromHistory (hist, 0.0f, opts); // newest-centered
+
+    CHECK (profile.getFramesUsed() > 1);
+    CHECK (profile.getEnergy() > 0.0f);
+    CHECK (std::isfinite (profile.getEnergy()));
+
+    // Stable bins preserved
+    CHECK (profile.getMagnitudes()[10] > 0.5f);
+    CHECK (profile.getMagnitudes()[20] > 0.2f);
+
+    // Spike bin attenuated vs raw single-frame capture
+    const float spiked = hist.getFrameByAgeFrames (4).magnitudes[100];
+    CHECK (spiked > 10.0f);
+    CHECK (profile.getMagnitudes()[100] < spiked * 0.5f);
+
+    // Boundary: age at oldest edge still builds
+    profile.buildFromHistory (hist, 1.0f, opts);
+    CHECK (profile.getFramesUsed() >= 1);
+    CHECK (std::isfinite (profile.getMagnitudes()[10]));
+    CHECK (profile.getMagnitudes()[10] >= 0.0f);
+
+    // Empty history → zeros
+    hist.clear();
+    profile.buildFromHistory (hist, 0.5f, opts);
+    CHECK_NEAR (profile.getEnergy(), 0.0f, 1e-7);
+    CHECK_NEAR (profile.getMagnitudes()[10], 0.0f, 1e-7);
+
+    // Gaussian weight peaks at center
+    CHECK_NEAR (SpectralMemoryProfile::gaussianWeight (0.0f, 2.0f), 1.0f, 1e-6);
+    CHECK (SpectralMemoryProfile::gaussianWeight (4.0f, 2.0f)
+           < SpectralMemoryProfile::gaussianWeight (1.0f, 2.0f));
+
+    // Capture recent uses multiple frames
+    for (int i = 0; i < 30; ++i)
+    {
+        frame.clear();
+        frame.magnitudes[5] = 2.0f;
+        if (i == 29)
+            frame.magnitudes[50] = 15.0f;
+        hist.pushFrame (frame);
+    }
+    profile.captureRecent (hist, 200.0f, opts);
+    CHECK (profile.getFramesUsed() > 1);
+    CHECK (profile.getMagnitudes()[5] > 1.0f);
+    CHECK (profile.getMagnitudes()[50] < 15.0f * 0.6f);
+
+    // Lerp / copy finite
+    SpectralMemoryProfile a, b, out;
+    a.prepare (constants::numBins, sr, constants::hopSize);
+    b.prepare (constants::numBins, sr, constants::hopSize);
+    out.prepare (constants::numBins, sr, constants::hopSize);
+    a.captureRecent (hist, 180.0f, opts);
+    b.buildFromHistory (hist, 0.4f, opts);
+    out.lerpFrom (a, b, 0.5f);
+    CHECK (std::isfinite (out.getEnergy()));
+    out.copyFrom (a);
+    CHECK_NEAR (out.getEnergy(), a.getEnergy(), 1e-4);
+}
+
+//==============================================================================
+static void testFreezeProfileCaptureAndLimiter()
+{
+    std::cout << "Freeze profile capture / contrast limiter / Shadow decay...\n";
+
+    constexpr double sr = 48000.0;
+    SpectralHistoryBuffer hist;
+    hist.prepare (sr, constants::hopSize, 2.0f);
+
+    SpectralFrame frame;
+    frame.prepare (constants::numBins);
+
+    // Vocal-like formants + one harsh spike frame (simulates unlucky Freeze instant)
+    for (int i = 0; i < 40; ++i)
+    {
+        frame.clear();
+        for (int k = 1; k < constants::numBins; ++k)
+        {
+            const float f1 = std::exp (-0.5f * std::pow ((k - 40) / 12.0f, 2.0f));
+            const float f2 = 0.7f * std::exp (-0.5f * std::pow ((k - 120) / 18.0f, 2.0f));
+            frame.magnitudes[(size_t) k] = f1 + f2 + 0.02f;
+        }
+        if (i == 39)
+            frame.magnitudes[200] = 25.0f; // consonant/spike
+        hist.pushFrame (frame);
+    }
+
+    SpectralMemoryProfile single, stabilized;
+    single.prepare (constants::numBins, sr, constants::hopSize);
+    stabilized.prepare (constants::numBins, sr, constants::hopSize);
+
+    // Single-frame "old Freeze" proxy
+    const auto& spikeFrame = hist.getFrameByAgeFrames (0);
+    for (int k = 0; k < constants::numBins; ++k)
+        single.getMagnitudesWritable()[k] = spikeFrame.magnitudes[(size_t) k];
+
+    MemoryProfileOptions opts;
+    opts.applyStability = true;
+    stabilized.captureRecent (hist, constants::freezeCaptureWindowMs, opts);
+
+    const float singleSpike = spikeFrame.magnitudes[200];
+    const float stabSpike = stabilized.getMagnitudes()[200];
+    CHECK (stabSpike < singleSpike * 0.5f);
+
+    // Isolated-peak contrast vs local neighborhood (not adjacent-bin ratio into silence floor)
+    auto peakContrast = [] (const float* m, int peakBin) -> float
+    {
+        float local = 0.0f;
+        int count = 0;
+        for (int k = peakBin - 4; k <= peakBin + 4; ++k)
+        {
+            if (k == peakBin || k < 1 || k >= constants::numBins)
+                continue;
+            local += m[k];
+            ++count;
+        }
+        local = (local / (float) std::max (1, count)) + 1.0e-6f;
+        return m[peakBin] / local;
+    };
+    const float singleContrast = peakContrast (single.getMagnitudes(), 200);
+    const float stabContrast = peakContrast (stabilized.getMagnitudes(), 200);
+    CHECK (stabContrast < singleContrast * 0.75f);
+    std::cout << "  peakContrast single=" << singleContrast << " stabilized=" << stabContrast
+              << " spikeMag " << singleSpike << "→" << stabSpike << "\n";
+
+    // Per-bin limiter softens isolated peaks
+    std::vector<float> mags ((size_t) constants::numBins, 0.1f);
+    mags[50] = 8.0f;
+    std::vector<float> scratch ((size_t) constants::numBins, 0.0f);
+    std::vector<float> prefix ((size_t) constants::numBins + 1, 0.0f);
+    const float before = mags[50];
+    applyPerBinContrastLimiter (mags.data(), constants::numBins, 12.0f, scratch.data(), prefix.data());
+    CHECK (mags[50] < before);
+    CHECK (mags[50] > 0.1f);
+    CHECK (std::isfinite (mags[50]));
+
+    // Shadow tail decay: higher Forget → less old-tap energy
+    SpectralModeProcessor modes;
+    modes.prepare (constants::numBins, sr, 1);
+    std::vector<float> destLow ((size_t) constants::numBins, 0.0f);
+    std::vector<float> destHigh ((size_t) constants::numBins, 0.0f);
+    ModeParams p;
+    p.influence = 0.5f;
+    p.recallAge01 = 0.2f;
+    p.memoryLengthSeconds = 4.0f;
+    p.blur = 0.2f;
+    p.forget = 0.1f;
+    modes.buildShadowTail (destLow.data(), constants::numBins, stabilized.getMagnitudes(),
+                           &hist, p, 0, true);
+    p.forget = 0.9f;
+    modes.reset();
+    modes.buildShadowTail (destHigh.data(), constants::numBins, stabilized.getMagnitudes(),
+                           &hist, p, 0, true);
+    double eLow = 0.0, eHigh = 0.0;
+    for (int i = 0; i < constants::numBins; ++i)
+    {
+        eLow += (double) destLow[(size_t) i] * destLow[(size_t) i];
+        eHigh += (double) destHigh[(size_t) i] * destHigh[(size_t) i];
+        CHECK (std::isfinite (destLow[(size_t) i]));
+    }
+    CHECK (eLow > eHigh * 0.85); // low Forget sustains more / comparable or higher energy
+    CHECK (eLow > 0.0 && eHigh > 0.0);
+
+    // Engine Freeze capture + crossfade
+    SpectralEngine engine;
+    engine.prepare (sr, 512, 2);
+    engine.setMode (SpectralMode::Shadow);
+    engine.setActiveMemoryLengthSeconds (3.0f);
+    engine.setSpectralParameterTargets (0.5f, 0.4f, 0.25f, 0.2f, 0.3f, 0.0f, false);
+    engine.snapSpectralSmoothersToTargets();
+
+    juce::AudioBuffer<float> buf (2, 512);
+    for (int n = 0; n < 80; ++n)
+    {
+        for (int s = 0; s < 512; ++s)
+        {
+            const float t = (float) (n * 512 + s) / (float) sr;
+            const float v = 0.2f * std::sin (2.0f * juce::MathConstants<float>::pi * 220.0f * t);
+            buf.setSample (0, s, v);
+            buf.setSample (1, s, v * 0.9f);
+        }
+        engine.process (buf);
+    }
+
+    CHECK (engine.getHistory (0).getAvailableFrameCount() > 10);
+    engine.setSpectralParameterTargets (0.5f, 0.4f, 0.25f, 0.2f, 0.3f, 0.0f, true);
+    for (int n = 0; n < 20; ++n)
+    {
+        buf.clear();
+        engine.process (buf);
+    }
+    CHECK (engine.isFreezeEngaged());
+    CHECK (engine.getFreezeCrossfadeAmount() > 0.5f);
+    CHECK (engine.getEffectiveMemoryProfile (0).getEnergy() > 0.0f);
+    CHECK (std::isfinite (engine.getEffectiveMemoryProfile (0).getEnergy()));
+}
+
+//==============================================================================
+static void testMergeEnvelopeAndNaNGuard()
+{
+    std::cout << "Merge envelope morph / NaN / gain bounds...\n";
+    SpectralModeProcessor modes;
+    modes.prepare (constants::numBins, 48000.0, 1);
+
+    std::vector<float> cur, hist;
+    fixtures::fillFormant (cur, 40.0f, 120.0f, 1.0f);
+    fixtures::fillFormant (hist, 55.0f, 90.0f, 1.0f);
+
+    ModeParams p;
+    p.influence = 0.55f;
+    p.blur = 0.5f;
+    p.forget = 0.25f;
+    p.recallAge01 = 0.4f;
+    p.transientPreserve = 0.0f;
+
+    auto before = cur;
+    modes.applyMergeMagnitudes (cur.data(), hist.data(), constants::numBins, p, 0);
+
+    double eIn = 0.0, eOut = 0.0;
+    for (int i = 0; i < constants::numBins; ++i)
+    {
+        CHECK (std::isfinite (cur[(size_t) i]));
+        CHECK (cur[(size_t) i] >= 0.0f);
+        eIn += (double) before[(size_t) i] * before[(size_t) i];
+        eOut += (double) cur[(size_t) i] * cur[(size_t) i];
+    }
+    const float ratio = (float) std::sqrt (eOut / std::max (eIn, 1e-20));
+    CHECK (ratio > 0.25f && ratio < 4.0f); // no runaway gain
+    // Envelope should have moved toward history formants (bin ~55 rises relative)
+    CHECK (cur[55] / (before[55] + 1e-6f) > 0.5f);
+}
+
+//==============================================================================
 static void testForgetAgeWeight()
 {
     std::cout << "Forget age weighting...\n";
@@ -245,7 +507,7 @@ static void testShadowInfluenceZeroIdentity()
     p.transientStrength = 0.8f;
     p.recallAge01 = 0.5f;
 
-    const bool changed = modes.process (SpectralMode::Shadow, frame, p, hist.data(), 0, constants::hopSize);
+    const bool changed = modes.process (SpectralMode::Shadow, frame, p, hist.data(), nullptr, 0, constants::hopSize);
     CHECK (! changed);
     for (int i = 0; i < constants::numBins; ++i)
         CHECK_NEAR (frame.magnitudes[(size_t) i], original[(size_t) i], 1e-6);
@@ -381,7 +643,7 @@ static void testEraseMergeInfluenceZeroIdentity()
         for (int i = 0; i < 200; ++i)
             modes.tickModeCrossfade (constants::hopSize);
 
-        CHECK (! modes.process (mode, frame, p, hist.data(), 0, constants::hopSize));
+        CHECK (! modes.process (mode, frame, p, hist.data(), nullptr, 0, constants::hopSize));
         for (int i = 0; i < constants::numBins; ++i)
             CHECK_NEAR (frame.magnitudes[(size_t) i], original[(size_t) i], 1e-6);
     }
@@ -504,7 +766,7 @@ static void testModeCrossfadeFinite()
         CHECK (modes.getModeAmount() >= 0.0f && modes.getModeAmount() <= 1.0f);
 
         auto work = frame;
-        CHECK (modes.process (mode, work, p, hist.data(), 0, constants::hopSize));
+        CHECK (modes.process (mode, work, p, hist.data(), nullptr, 0, constants::hopSize));
         for (int b = 0; b < constants::numBins; ++b)
         {
             CHECK (std::isfinite (work.magnitudes[(size_t) b]));
@@ -936,6 +1198,9 @@ int main()
     std::cout << "AFTERIMAGE validation tests\n";
     testHistoryBuffer();
     testHistoryInterpolationFocused();
+    testSpectralMemoryProfile();
+    testFreezeProfileCaptureAndLimiter();
+    testMergeEnvelopeAndNaNGuard();
     testForgetAgeWeight();
     testBlur();
     testShadowInfluenceZeroIdentity();

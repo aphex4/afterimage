@@ -24,6 +24,13 @@ namespace constants
     constexpr float  memoryLengthMaxSec = 10.0f;
     constexpr float  memoryLengthDefaultSec = 3.0f;
 
+    // Stabilized memory-profile window (internal — not a user parameter).
+    // Hop 512 @ 44.1 kHz ≈ 11.6 ms/frame → 200 ms ≈ 17 frames.
+    constexpr float  memoryProfileWindowMs    = 200.0f;
+    constexpr float  memoryProfileMaxWindowMs = 280.0f;
+    constexpr float  freezeCaptureWindowMs    = 200.0f;
+    constexpr float  freezeCrossfadeMs        = 100.0f; // 50–150 ms range
+
     // -------------------------------------------------------------------------
     // Spectral blur
     // -------------------------------------------------------------------------

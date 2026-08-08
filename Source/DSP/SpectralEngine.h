@@ -2,6 +2,7 @@
 
 #include "STFTProcessor.h"
 #include "SpectralHistoryBuffer.h"
+#include "SpectralMemoryProfile.h"
 #include "SpectralModes.h"
 #include "ParameterSmoother.h"
 #include "VisualizationAtomics.h"
@@ -30,10 +31,11 @@ namespace afterimage
                                             float hopSeconds) noexcept;
 
 /**
-    STFT + per-channel spectral history + Shadow mode.
+    STFT + per-channel spectral history + memory profiles + modes.
 
     Audio-thread only for history mutation. UI reads VisualizationAtomics.
     History is read BEFORE committing the current analysis frame.
+    Modes consume stabilized SpectralMemoryProfile magnitudes (not raw frames).
 */
 class SpectralEngine
 {
@@ -85,6 +87,11 @@ public:
     [[nodiscard]] SpectralHistoryBuffer& getHistory (int channel = 0) noexcept;
     [[nodiscard]] const SpectralHistoryBuffer& getHistory (int channel = 0) const noexcept;
 
+    /** Diagnostics / tests: effective memory profile after Freeze crossfade. */
+    [[nodiscard]] const SpectralMemoryProfile& getEffectiveMemoryProfile (int channel = 0) const noexcept;
+    [[nodiscard]] float getFreezeCrossfadeAmount() const noexcept { return freezeCrossfade_; }
+    [[nodiscard]] bool isFreezeEngaged() const noexcept { return freezeEngaged_; }
+
 private:
     static void spectrumCallback (void* userData,
                                   float* interleavedFftData,
@@ -94,6 +101,8 @@ private:
     void onSpectrum (float* interleavedFftData, int fftSize, int channelIndex) noexcept;
     void clearHistoryOnAudioThread() noexcept;
     void publishVisualization (int channelIndex) noexcept;
+    void updateFreezeState (bool freezeTarget, int hopSamples) noexcept;
+    void buildEffectiveProfile (int channelIndex, float recallAge01) noexcept;
 
     STFTProcessor stft_;
     std::vector<std::unique_ptr<SpectralHistoryBuffer>> histories_;
@@ -102,7 +111,14 @@ private:
 
     SpectralFrame workingFrame_;
     SpectralFrame analysisForHistory_; // unmodified analysis pushed to history
-    std::vector<float> historyMagsScratch_;
+
+    // Per-channel memory profiles (live / frozen / crossfade result)
+    std::vector<SpectralMemoryProfile> liveProfiles_;
+    std::vector<SpectralMemoryProfile> frozenProfiles_;
+    std::vector<SpectralMemoryProfile> effectiveProfiles_;
+    /** Scratch for Shadow multi-age taps (owned by modes, but prepared with engine SR). */
+    SpectralMemoryProfile tapProfileScratch_;
+
     std::vector<std::vector<float>> previousMagnitudes_;
     std::vector<bool> hasPreviousFrame_;
     std::vector<std::uint64_t> frameCounters_;
@@ -116,10 +132,14 @@ private:
     std::uint32_t vizSequence_ = 0;
 
     // Random Recall wander (audio-thread state; no alloc)
-    float wanderOffset_ = 0.0f;   // smoothed bipolar noise in [-1, 1]
+    float wanderOffset_ = 0.0f;
     std::uint32_t wanderRng_ = 0xA5F1C3E9u;
 
     bool freezeTarget_ = false;
+    bool freezeEngaged_ = false;
+    bool freezeWasTarget_ = false;
+    float freezeCrossfade_ = 1.0f; // 0 = live, 1 = fully frozen
+
     double sampleRate_ = 44100.0;
     int numChannels_ = 2;
     bool prepared_ = false;

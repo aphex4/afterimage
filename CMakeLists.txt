@@ -81,6 +81,7 @@ set(AFTERIMAGE_DSP_SOURCES
     Source/DSP/SpectralEngine.cpp
     Source/DSP/STFTProcessor.cpp
     Source/DSP/SpectralHistoryBuffer.cpp
+    Source/DSP/SpectralMemoryProfile.cpp
     Source/DSP/SpectralModes.cpp)
 
 set(AFTERIMAGE_MONOCYPHER_SOURCES
