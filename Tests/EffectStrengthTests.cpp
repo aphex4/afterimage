@@ -1,7 +1,9 @@
 #include "DSP/SpectralModes.h"
 #include "DSP/SpectralEngine.h"
+#include "DSP/SpectralBlur.h"
 #include "DSP/SpectralTail.h"
 #include "DSP/LogSmoother.h"
+#include "PluginProcessor.h"
 #include "SpectralFixtures.h"
 #include "Utilities/Constants.h"
 
@@ -325,73 +327,36 @@ void testEraseProgressiveAndFreeze()
 //==============================================================================
 void testMergeEffectStrength()
 {
-    std::cout << "Merge effect-strength (envelope + landmarks)...\n";
+    std::cout << "Merge effect-strength (Influence moves spectrum)...\n";
     SpectralModeProcessor modes;
     modes.prepare (constants::numBins, 48000.0, 1);
 
-    std::vector<float> carrier, identity;
+    std::vector<float> carrier, memory;
     fixtures::fillPinkTilt (carrier, 0.6f);
-    fixtures::fillFormant (identity, 45.0f, 140.0f, 1.2f);
+    fixtures::fillFormant (memory, 45.0f, 140.0f, 1.2f);
 
-    auto distanceToHist = [&] (float influence) -> std::pair<double, double>
+    auto distFromCur = [&] (float influence) -> double
     {
         modes.reset();
         auto cur = carrier;
-        auto original = cur;
-        auto p = makeParams (influence, 0.25f, 0.30f, 0.45f);
-        modes.applyMergeMagnitudes (cur.data(), identity.data(), constants::numBins, p, 0);
-        const double envDistHist = fixtures::envelopeDistance (cur.data(), identity.data(),
-                                                               constants::numBins, 24);
-        const double logDistCur = fixtures::logSpectralDistance (cur.data(), original.data(),
-                                                                constants::numBins);
-        return { envDistHist, logDistCur };
+        auto p = makeParams (influence, 0.25f, 0.50f, 0.45f);
+        p.recallPosition = 0.5f;
+        for (int i = 0; i < 16; ++i)
+        {
+            cur = carrier;
+            modes.applyMergeMagnitudes (cur.data(), memory.data(), constants::numBins, p, 0);
+        }
+        return fixtures::logSpectralDistance (cur.data(), carrier.data(), constants::numBins);
     };
 
-    CHECK (distanceToHist (0.0f).second < 1e-3);
-
-    const auto d25 = distanceToHist (0.25f);
-    const auto d40 = distanceToHist (0.40f);
-    const auto d50 = distanceToHist (0.50f);
-    const auto d75 = distanceToHist (0.75f);
-
-    CHECK (d25.second > 0.05);
-    CHECK (d40.second > d25.second);
-    CHECK (d50.second > d40.second);
-    CHECK (d75.second > d50.second);
-    // Envelope moves toward historical identity as Influence rises (mid range).
-    // Very high Influence may engage residual energy caps that affect absolute
-    // log-envelope distance without undoing the morph direction vs the carrier.
-    CHECK (d50.first < d25.first);
-    CHECK (d75.first < d25.first);
-
-    // Not a uniform level change: relative spectral shape vs current must move
-    {
-        modes.reset();
-        auto cur = carrier;
-        auto original = cur;
-        modes.applyMergeMagnitudes (cur.data(), identity.data(), constants::numBins,
-                                    makeParams (0.45f, 0.25f, 0.35f), 0);
-        double shape = 0.0;
-        for (int i = 1; i < constants::numBins; ++i)
-        {
-            const float r0 = (original[(size_t) i] + 1e-6f) / (original[(size_t) i - 1] + 1e-6f);
-            const float r1 = (cur[(size_t) i] + 1e-6f) / (cur[(size_t) i - 1] + 1e-6f);
-            shape += std::abs (std::log ((double) r1) - std::log ((double) r0));
-        }
-        CHECK (shape > 5.0);
-    }
-
-    // Landmarks: formant peaks should rise relative to pink carrier
-    {
-        modes.reset();
-        auto cur = carrier;
-        modes.applyMergeMagnitudes (cur.data(), identity.data(), constants::numBins,
-                                    makeParams (0.55f, 0.2f, 0.25f), 0);
-        CHECK (cur[45] / (carrier[45] + 1e-8f) > 1.15f);
-    }
-
-    std::cout << "  envDist→hist @25/50/75=" << d25.first << " " << d50.first << " " << d75.first
-              << " | fromCur=" << d25.second << " " << d50.second << " " << d75.second << "\n";
+    CHECK (distFromCur (0.0f) < 1e-3);
+    const double d25 = distFromCur (0.25f);
+    const double d50 = distFromCur (0.50f);
+    const double d100 = distFromCur (1.0f);
+    CHECK (d25 > 0.05);
+    CHECK (d50 > d25);
+    CHECK (d100 > d50);
+    std::cout << "  logDist fromCur @25/50/100=" << d25 << " " << d50 << " " << d100 << "\n";
 }
 
 void testMergeSilenceAndStereoIsolation()
@@ -423,11 +388,10 @@ void testMergeSilenceAndStereoIsolation()
     CHECK (fixtures::sumSq (b1.data(), constants::numBins) > 1e-6);
 }
 
-/** Mid Influence morph loudness is free of the old input-referenced energy policy.
-    Absolute ceiling stays inactive on normal fixtures; Gain Match owns trim. */
+/** Mid Influence blur stays finite; absolute ceiling inactive on normal fixtures. */
 void testMergeMidInfluenceEnergyBound()
 {
-    std::cout << "Merge mid-Influence energy bound...\n";
+    std::cout << "Merge mid-Influence finite / ceiling inactive...\n";
     SpectralModeProcessor modes;
     modes.prepare (constants::numBins, 48000.0, 1);
 
@@ -439,6 +403,7 @@ void testMergeMidInfluenceEnergyBound()
     {
         modes.reset();
         auto p = makeParams (influence, 0.25f, 0.35f, 0.45f);
+        p.recallPosition = 0.5f;
         std::vector<float> cur;
 
         for (int frame = 0; frame < 48; ++frame)
@@ -447,18 +412,12 @@ void testMergeMidInfluenceEnergyBound()
             modes.applyMergeMagnitudes (cur.data(), loudMemory.data(), constants::numBins, p, 0);
         }
 
-        const double eIn = fixtures::sumSq (quietCarrier.data(), constants::numBins);
-        const double eOut = fixtures::sumSq (cur.data(), constants::numBins);
-        const float ampDb = 20.0f * std::log10 (std::sqrt (eOut / std::max (eIn, 1e-20)) + 1e-12f);
-        std::cout << "  Influence " << (int) std::lround (influence * 100.0f)
-                  << "% ampDb=" << ampDb << "\n";
-        CHECK (std::isfinite (ampDb));
-        // Without input-referenced energy policy, morph may change loudness freely.
-        CHECK (ampDb < 18.0f);
-        CHECK (ampDb > -18.0f);
-        CHECK (modes.getLastEnergyScale (0) > 0.99f); // absolute ceiling inactive
+        for (float v : cur)
+            CHECK (std::isfinite (v) && v >= 0.0f);
+        CHECK (modes.getLastEnergyScale (0) > 0.99f);
         CHECK (fixtures::logSpectralDistance (cur.data(), quietCarrier.data(),
                                               constants::numBins) > 0.05);
+        std::cout << "  Influence " << (int) std::lround (influence * 100.0f) << "% ok\n";
     }
 }
 
@@ -766,46 +725,26 @@ void testPhase9EraseMergeAcceptance()
         std::cout << "  Erase frame varOut=" << varOut << "\n";
     }
 
-    // Merge full morph: envelope within ~1.5 dB RMS of memory
+    // Merge blur: Influence 100% moves the spectrum; stays finite
     {
         modes.reset();
         std::vector<float> carrier, memory;
         fixtures::fillPinkTilt (carrier, 0.5f);
         fixtures::fillFormant (memory, 50.0f, 130.0f, 1.5f);
-        ModeParams p = makeParams (1.0f, 0.2f, 0.0f);
+        ModeParams p = makeParams (1.0f, 0.2f, 0.75f);
+        p.recallPosition = 0.5f;
         auto cur = carrier;
-        for (int i = 0; i < 8; ++i)
+        for (int i = 0; i < 16; ++i)
         {
             cur = carrier;
             modes.applyMergeMagnitudes (cur.data(), memory.data(), constants::numBins, p, 0);
         }
-        LogSmoother log;
-        log.prepare (constants::numBins, 48000.0, constants::fftSize);
-        log.setWidth (0.5f);
-        std::vector<float> envOut ((size_t) constants::numBins), envMem ((size_t) constants::numBins);
-        std::vector<float> prefix ((size_t) constants::numBins + 1);
-        log.process (cur.data(), envOut.data(), constants::numBins, prefix.data());
-        log.process (memory.data(), envMem.data(), constants::numBins, prefix.data());
-        double eOut = 0.0, eMem = 0.0;
-        for (int k = 2; k < constants::numBins - 2; ++k)
-        {
-            eOut += (double) envOut[(size_t) k] * envOut[(size_t) k];
-            eMem += (double) envMem[(size_t) k] * envMem[(size_t) k];
-        }
-        const float scale = (eOut > 1e-20 && eMem > 1e-20)
-                                ? (float) std::sqrt (eMem / eOut) : 1.0f;
-        double err = 0.0;
-        int count = 0;
-        for (int k = 2; k < constants::numBins - 2; ++k)
-        {
-            const float g = (envOut[(size_t) k] * scale + 1e-8f) / (envMem[(size_t) k] + 1e-8f);
-            const float db = constants::gainToDb (g);
-            err += (double) db * (double) db;
-            ++count;
-        }
-        const float rmsDb = (float) std::sqrt (err / std::max (1, count));
-        std::cout << "  Merge envelope RMS err dB (level-norm)=" << rmsDb << "\n";
-        CHECK (rmsDb <= 1.5f);
+        const float dist = (float) fixtures::logSpectralDistance (cur.data(), carrier.data(),
+                                                                  constants::numBins);
+        std::cout << "  Merge blur logDist vs carrier=" << dist << "\n";
+        CHECK (dist > 0.5f);
+        for (float v : cur)
+            CHECK (std::isfinite (v) && v >= 0.0f);
     }
 
     // Absolute ceiling inactive on normal levels
@@ -1065,119 +1004,425 @@ void testRound2ShadowBurstRt60Independent()
     CHECK (diffDb < 6.0f);
 }
 
-void testRound2MergeNotIdentity()
+//==============================================================================
+// Round 3 — Merge spectral blur (engine-level)
+//==============================================================================
+namespace
 {
-    std::cout << "Round 2 Merge: not an identity transform...\n";
-    SpectralModeProcessor modes;
-    modes.prepare (constants::numBins, 48000.0, 1);
-    modes.reset();
-
-    std::vector<float> white ((size_t) constants::numBins, 0.4f);
-    std::vector<float> narrow ((size_t) constants::numBins, 0.02f);
-    narrow[80] = 3.0f;
-    narrow[81] = 2.5f;
-    narrow[82] = 2.0f;
-
-    auto cur = white;
-    auto original = white;
-    ModeParams p = makeParams (1.0f, 0.25f, 0.0f, 0.45f, 3.0f);
-    for (int i = 0; i < 12; ++i)
+void processEngineBlocks (SpectralEngine& engine, juce::AudioBuffer<float>& buf, int block = 512)
+{
+    for (int offset = 0; offset < buf.getNumSamples(); )
     {
-        cur = white;
-        modes.applyMergeMagnitudes (cur.data(), narrow.data(), constants::numBins, p, 0);
+        const int n = std::min (block, buf.getNumSamples() - offset);
+        std::vector<float*> ptrs ((size_t) buf.getNumChannels());
+        for (int ch = 0; ch < buf.getNumChannels(); ++ch)
+            ptrs[(size_t) ch] = buf.getWritePointer (ch) + offset;
+        juce::AudioBuffer<float> view (ptrs.data(), buf.getNumChannels(), n);
+        engine.process (view);
+        offset += n;
     }
-
-    double err = 0.0;
-    int count = 0;
-    for (int k = 2; k < constants::numBins - 2; ++k)
-    {
-        const float da = constants::gainToDb (cur[(size_t) k] + 1e-8f);
-        const float db = constants::gainToDb (original[(size_t) k] + 1e-8f);
-        const float d = da - db;
-        err += (double) d * (double) d;
-        ++count;
-    }
-    const float rmsDb = (float) std::sqrt (err / std::max (1, count));
-    std::cout << "  log-spectrum RMS diff vs input=" << rmsDb << " dB\n";
-    CHECK (rmsDb >= 6.0f);
 }
 
-void testRound2MergeFullMorph()
+void fillClickTrain (juce::AudioBuffer<float>& buf, double sr, float hz, float amp) noexcept
 {
-    std::cout << "Round 2 Merge: full morph reaches smeared memory...\n";
-    SpectralModeProcessor modes;
-    modes.prepare (constants::numBins, 48000.0, 1);
-    modes.reset();
+    buf.clear();
+    const int period = std::max (1, (int) std::lround (sr / (double) hz));
+    for (int ch = 0; ch < buf.getNumChannels(); ++ch)
+        for (int i = 0; i < buf.getNumSamples(); i += period)
+            buf.setSample (ch, i, amp);
+}
 
-    std::vector<float> carrier, memory;
-    fixtures::fillPinkTilt (carrier, 0.5f);
-    fixtures::fillFormant (memory, 50.0f, 130.0f, 1.5f);
-    ModeParams p = makeParams (1.0f, 0.2f, 0.0f);
-
-    auto cur = carrier;
-    for (int i = 0; i < 16; ++i)
+[[nodiscard]] float crestFactor (const float* x, int n) noexcept
+{
+    if (n <= 0)
+        return 0.0f;
+    float peak = 0.0f;
+    double e = 0.0;
+    for (int i = 0; i < n; ++i)
     {
-        cur = carrier;
-        modes.applyMergeMagnitudes (cur.data(), memory.data(), constants::numBins, p, 0);
+        const float a = std::abs (x[i]);
+        peak = std::max (peak, a);
+        e += (double) x[i] * (double) x[i];
+    }
+    const float rms = (float) std::sqrt (e / (double) n);
+    return peak / std::max (1.0e-12f, rms);
+}
+
+[[nodiscard]] float normalisedXcorr (const float* a, const float* b, int n) noexcept
+{
+    if (n <= 0)
+        return 1.0f;
+    double sa = 0.0, sb = 0.0, sab = 0.0, saa = 0.0, sbb = 0.0;
+    for (int i = 0; i < n; ++i)
+    {
+        sa += a[i];
+        sb += b[i];
+        sab += (double) a[i] * (double) b[i];
+        saa += (double) a[i] * (double) a[i];
+        sbb += (double) b[i] * (double) b[i];
+    }
+    const double invN = 1.0 / (double) n;
+    const double ma = sa * invN, mb = sb * invN;
+    const double cov = sab * invN - ma * mb;
+    const double va = saa * invN - ma * ma;
+    const double vb = sbb * invN - mb * mb;
+    if (va <= 1.0e-20 || vb <= 1.0e-20)
+        return 0.0f;
+    return (float) (cov / std::sqrt (va * vb));
+}
+
+void configureMergeEngine (SpectralEngine& engine, float influence, float blur,
+                           int channels = 1, float recall = 0.0f)
+{
+    engine.prepare (48000.0, 512, channels);
+    engine.setMode (SpectralMode::Merge);
+    engine.setActiveMemoryLengthSeconds (3.0f);
+    engine.setSpectralParameterTargets (influence, recall, 0.25f, blur, 0.0f, 0.0f, false);
+    engine.snapSpectralSmoothersToTargets();
+}
+} // namespace
+
+void testRound3MergeCrestDissolve()
+{
+    std::cout << "Round 3 Merge: crest factor dissolve...\n";
+    constexpr double sr = 48000.0;
+    constexpr int total = (int) (4.0 * sr);
+    const int latency = constants::fftSize;
+
+    juce::AudioBuffer<float> dry (1, total);
+    fillClickTrain (dry, sr, 4.0f, 1.0f);
+    juce::AudioBuffer<float> wet;
+    wet.makeCopyOf (dry);
+
+    SpectralEngine identity;
+    configureMergeEngine (identity, 0.0f, 1.0f, 1);
+    processEngineBlocks (identity, dry);
+
+    SpectralEngine blur;
+    configureMergeEngine (blur, 1.0f, 1.0f, 1);
+    processEngineBlocks (blur, wet);
+
+    const int start = latency + (int) (0.5 * sr);
+    const int n = total - start - (int) (0.25 * sr);
+    CHECK (n > 4096);
+    const float crestDry = crestFactor (dry.getReadPointer (0) + start, n);
+    const float crestWet = crestFactor (wet.getReadPointer (0) + start, n);
+    const float reduction = 1.0f - crestWet / std::max (1.0e-6f, crestDry);
+    std::cout << "  crestDry=" << crestDry << " crestWet=" << crestWet
+              << " reduction=" << reduction << "\n";
+    CHECK (crestDry > 2.0f);
+    CHECK (reduction >= 0.60f);
+}
+
+void testRound3MergePhaseDecorrelation()
+{
+    std::cout << "Round 3 Merge: dry/wet cross-correlation...\n";
+    constexpr double sr = 48000.0;
+    constexpr int total = (int) (3.0 * sr);
+    const int latency = constants::fftSize;
+
+    juce::AudioBuffer<float> dry (1, total);
+    {
+        std::uint32_t rng = 0xA11CEu;
+        fillPink (dry, rng);
+        dry.applyGain (0.8f);
+    }
+    juce::AudioBuffer<float> wet;
+    wet.makeCopyOf (dry);
+
+    SpectralEngine identity;
+    configureMergeEngine (identity, 0.0f, 1.0f, 1);
+    processEngineBlocks (identity, dry);
+
+    SpectralEngine blur;
+    configureMergeEngine (blur, 1.0f, 1.0f, 1);
+    processEngineBlocks (blur, wet);
+
+    const int start = latency + (int) (0.4 * sr);
+    const int n = total - start - 2048;
+    const float xcorr = normalisedXcorr (dry.getReadPointer (0) + start,
+                                         wet.getReadPointer (0) + start, n);
+    std::cout << "  normalised xcorr=" << xcorr << "\n";
+    CHECK (xcorr < 0.3f);
+}
+
+void testRound3MergeBlurMonotonicCrest()
+{
+    std::cout << "Round 3 Merge: Blur monotonic crest reduction...\n";
+    constexpr double sr = 48000.0;
+    constexpr int total = (int) (3.5 * sr);
+    const int latency = constants::fftSize;
+    const int start = latency + (int) (0.5 * sr);
+    const int n = total - start - (int) (0.25 * sr);
+
+    juce::AudioBuffer<float> src (1, total);
+    fillClickTrain (src, sr, 4.0f, 1.0f);
+
+    float prevReduction = -1.0f;
+    for (int step = 0; step <= 10; ++step)
+    {
+        const float blurAmt = (float) step / 10.0f;
+        juce::AudioBuffer<float> dry;
+        dry.makeCopyOf (src);
+        juce::AudioBuffer<float> wet;
+        wet.makeCopyOf (src);
+
+        SpectralEngine identity;
+        configureMergeEngine (identity, 0.0f, blurAmt, 1);
+        processEngineBlocks (identity, dry);
+
+        SpectralEngine blur;
+        configureMergeEngine (blur, 1.0f, blurAmt, 1);
+        processEngineBlocks (blur, wet);
+
+        const float crestDry = crestFactor (dry.getReadPointer (0) + start, n);
+        const float crestWet = crestFactor (wet.getReadPointer (0) + start, n);
+        const float reduction = 1.0f - crestWet / std::max (1.0e-6f, crestDry);
+        std::cout << "  Blur=" << blurAmt << " reduction=" << reduction << "\n";
+        CHECK (reduction + 0.02f >= prevReduction);
+        prevReduction = reduction;
+    }
+}
+
+void testRound3MergeStereoDecorrelation()
+{
+    std::cout << "Round 3 Merge: stereo decorrelation...\n";
+    constexpr double sr = 48000.0;
+    constexpr int total = (int) (3.0 * sr);
+    const int latency = constants::fftSize;
+
+    juce::AudioBuffer<float> buf (2, total);
+    {
+        juce::AudioBuffer<float> mono (1, total);
+        std::uint32_t rng = 0x51EEDB01u;
+        fillPink (mono, rng);
+        mono.applyGain (0.75f);
+        buf.copyFrom (0, 0, mono, 0, 0, total);
+        buf.copyFrom (1, 0, mono, 0, 0, total);
     }
 
-    LogSmoother log;
-    log.prepare (constants::numBins, 48000.0, constants::fftSize);
-    log.setWidth (0.5f); // blur=0 → Merge base constant-Q width
-    std::vector<float> envMem ((size_t) constants::numBins);
-    std::vector<float> prefix ((size_t) constants::numBins + 1);
-    log.process (memory.data(), envMem.data(), constants::numBins, prefix.data());
+    SpectralEngine engine;
+    configureMergeEngine (engine, 1.0f, 0.75f, 2);
+    processEngineBlocks (engine, buf);
 
-    double eOut = 0.0, eMem = 0.0;
-    for (int k = 2; k < constants::numBins - 2; ++k)
+    const int start = latency + (int) (0.5 * sr);
+    const int n = total - start - 2048;
+    const float corr = normalisedXcorr (buf.getReadPointer (0) + start,
+                                        buf.getReadPointer (1) + start, n);
+    std::cout << "  L/R corr=" << corr << "\n";
+    CHECK (corr < 0.6f);
+}
+
+void testRound3MergePinkSpectrumBalance()
+{
+    std::cout << "Round 3 Merge: pink-noise spectrum balance (not de-esser)...\n";
+    constexpr double sr = 48000.0;
+    constexpr int total = (int) (4.0 * sr);
+    const int latency = constants::fftSize;
+
+    juce::AudioBuffer<float> dry (1, total);
     {
-        eOut += (double) cur[(size_t) k] * cur[(size_t) k];
-        eMem += (double) envMem[(size_t) k] * envMem[(size_t) k];
+        std::uint32_t rng = 0x91A5E001u;
+        fillPink (dry, rng);
+        dry.applyGain (0.7f);
     }
-    const float scale = (eOut > 1e-20 && eMem > 1e-20)
-                            ? (float) std::sqrt (eMem / eOut) : 1.0f;
+    juce::AudioBuffer<float> wet;
+    wet.makeCopyOf (dry);
+
+    SpectralEngine identity;
+    configureMergeEngine (identity, 0.0f, 1.0f, 1);
+    processEngineBlocks (identity, dry);
+
+    SpectralEngine blur;
+    configureMergeEngine (blur, 1.0f, 1.0f, 1);
+    processEngineBlocks (blur, wet);
+
+    constexpr int order = 11; // 2048
+    constexpr int N = 1 << order;
+    juce::dsp::FFT fft (order);
+    std::vector<double> accIn ((size_t) (N / 2), 0.0);
+    std::vector<double> accOut ((size_t) (N / 2), 0.0);
+    std::vector<float> scratch ((size_t) (N * 2), 0.0f);
+    int frames = 0;
+    const int start = latency + (int) (0.5 * sr);
+    for (int pos = start; pos + N < total; pos += N / 2)
+    {
+        auto accumulate = [&] (const float* x, std::vector<double>& acc)
+        {
+            std::fill (scratch.begin(), scratch.end(), 0.0f);
+            for (int i = 0; i < N; ++i)
+                scratch[(size_t) i] = x[pos + i]
+                    * (0.5f - 0.5f * std::cos (2.0f * juce::MathConstants<float>::pi
+                                               * (float) i / (float) N));
+            fft.performFrequencyOnlyForwardTransform (scratch.data());
+            for (int k = 1; k < N / 2; ++k)
+                acc[(size_t) k] += (double) scratch[(size_t) k];
+        };
+        accumulate (dry.getReadPointer (0), accIn);
+        accumulate (wet.getReadPointer (0), accOut);
+        ++frames;
+    }
+    CHECK (frames > 8);
+
     double err = 0.0;
     int count = 0;
-    for (int k = 2; k < constants::numBins - 2; ++k)
+    // Skip DC / very low bins and near-Nyquist; compare midband spectral balance.
+    for (int k = 8; k < N / 2 - 8; ++k)
     {
-        const float g = (cur[(size_t) k] * scale + 1e-8f) / (envMem[(size_t) k] + 1e-8f);
-        const float db = constants::gainToDb (g);
-        err += (double) db * (double) db;
+        const float inDb = constants::gainToDb ((float) (accIn[(size_t) k] / frames) + 1e-12f);
+        const float outDb = constants::gainToDb ((float) (accOut[(size_t) k] / frames) + 1e-12f);
+        const double d = (double) outDb - (double) inDb;
+        err += d * d;
         ++count;
     }
+    // Level-normalize: subtract mean dB offset before RMS.
+    double mean = 0.0;
+    for (int k = 8; k < N / 2 - 8; ++k)
+    {
+        const float inDb = constants::gainToDb ((float) (accIn[(size_t) k] / frames) + 1e-12f);
+        const float outDb = constants::gainToDb ((float) (accOut[(size_t) k] / frames) + 1e-12f);
+        mean += (double) outDb - (double) inDb;
+    }
+    mean /= std::max (1, count);
+    err = 0.0;
+    for (int k = 8; k < N / 2 - 8; ++k)
+    {
+        const float inDb = constants::gainToDb ((float) (accIn[(size_t) k] / frames) + 1e-12f);
+        const float outDb = constants::gainToDb ((float) (accOut[(size_t) k] / frames) + 1e-12f);
+        const double d = ((double) outDb - (double) inDb) - mean;
+        err += d * d;
+    }
     const float rmsDb = (float) std::sqrt (err / std::max (1, count));
-    std::cout << "  full-morph vs CQ(memory) RMS err dB=" << rmsDb << "\n";
+    std::cout << "  spectrum shape RMS err dB=" << rmsDb << " (mean offset " << mean << ")\n";
     CHECK (rmsDb <= 3.0f);
 }
 
-void testRound2MergeMonotonic()
+void testRound3MergeMixZeroNull()
 {
-    std::cout << "Round 2 Merge: partial morph monotonic vs Influence...\n";
-    SpectralModeProcessor modes;
-    modes.prepare (constants::numBins, 48000.0, 1);
+    std::cout << "Round 3 Merge: Mix 0% null (bit-identical dry)...\n";
+    constexpr double sr = 48000.0;
+    constexpr int block = 512;
+    constexpr int total = 48000;
 
-    std::vector<float> carrier, memory;
-    fixtures::fillPinkTilt (carrier, 0.6f);
-    fixtures::fillFormant (memory, 45.0f, 140.0f, 1.2f);
+    AfterimageAudioProcessor proc;
+    proc.setPlayConfigDetails (1, 1, sr, block);
+    proc.prepareToPlay (sr, block);
 
-    float prev = -1.0f;
-    for (int step = 0; step <= 10; ++step)
+    if (auto* mode = proc.getAPVTS().getParameter (constants::idMode))
     {
-        const float infl = (float) step / 10.0f;
-        modes.reset();
-        auto cur = carrier;
-        ModeParams p = makeParams (infl, 0.25f, 0.15f, 0.45f, 3.0f);
-        for (int i = 0; i < 8; ++i)
-        {
-            cur = carrier;
-            modes.applyMergeMagnitudes (cur.data(), memory.data(), constants::numBins, p, 0);
-        }
-        const float dist = (float) fixtures::logSpectralDistance (cur.data(), carrier.data(),
-                                                                  constants::numBins);
-        std::cout << "  Infl=" << infl << " logDist=" << dist << "\n";
-        CHECK (dist + 1e-4f >= prev);
-        prev = dist;
+        mode->beginChangeGesture();
+        mode->setValueNotifyingHost (mode->convertTo0to1 (2.0f)); // Merge
+        mode->endChangeGesture();
     }
+    if (auto* mix = proc.getAPVTS().getParameter (constants::idMix))
+    {
+        mix->beginChangeGesture();
+        mix->setValueNotifyingHost (mix->convertTo0to1 (0.0f));
+        mix->endChangeGesture();
+    }
+    if (auto* infl = proc.getAPVTS().getParameter (constants::idInfluence))
+    {
+        infl->beginChangeGesture();
+        infl->setValueNotifyingHost (infl->convertTo0to1 (1.0f));
+        infl->endChangeGesture();
+    }
+    if (auto* blur = proc.getAPVTS().getParameter (constants::idBlur))
+    {
+        blur->beginChangeGesture();
+        blur->setValueNotifyingHost (blur->convertTo0to1 (1.0f));
+        blur->endChangeGesture();
+    }
+    if (auto* gm = proc.getAPVTS().getParameter (constants::idGainMatch))
+    {
+        gm->beginChangeGesture();
+        gm->setValueNotifyingHost (0.0f);
+        gm->endChangeGesture();
+    }
+
+    // Settle smoothers on silence.
+    {
+        juce::AudioBuffer<float> warm (1, 8192);
+        warm.clear();
+        juce::MidiBuffer midi;
+        for (int off = 0; off < warm.getNumSamples(); off += block)
+        {
+            const int n = std::min (block, warm.getNumSamples() - off);
+            float* p = warm.getWritePointer (0) + off;
+            juce::AudioBuffer<float> view (&p, 1, n);
+            proc.processBlock (view, midi);
+        }
+    }
+
+    juce::AudioBuffer<float> buf (1, total);
+    for (int i = 0; i < total; ++i)
+        buf.setSample (0, i, 0.25f * (float) std::sin (2.0 * juce::MathConstants<double>::pi
+                                                       * 440.0 * (double) i / sr));
+    juce::AudioBuffer<float> dry;
+    dry.makeCopyOf (buf);
+
+    {
+        juce::MidiBuffer midi;
+        for (int off = 0; off < total; off += block)
+        {
+            const int n = std::min (block, total - off);
+            float* p = buf.getWritePointer (0) + off;
+            juce::AudioBuffer<float> view (&p, 1, n);
+            proc.processBlock (view, midi);
+        }
+    }
+
+    const int latency = proc.getLatencySamples();
+    double maxErr = 0.0;
+    for (int i = latency; i < total; ++i)
+        maxErr = std::max (maxErr, (double) std::abs (buf.getSample (0, i)
+                                                      - dry.getSample (0, i - latency)));
+    std::cout << "  Mix0 maxErr=" << maxErr << " latency=" << latency << "\n";
+    CHECK (maxErr < 1.0e-5);
+}
+
+void testRound3MergeNoAlloc()
+{
+    std::cout << "Round 3 Merge: no post-prepare allocation (capacity stable)...\n";
+    SpectralEngine engine;
+    configureMergeEngine (engine, 1.0f, 1.0f, 2);
+    const int cap0 = engine.getHistory (0).getCapacity();
+    const int cap1 = engine.getHistory (1).getCapacity();
+    CHECK (cap0 > 0 && cap1 > 0);
+
+    juce::AudioBuffer<float> buf (2, 48000);
+    {
+        std::uint32_t rng = 0xA110C001u;
+        fillPink (buf, rng);
+    }
+    processEngineBlocks (engine, buf);
+
+    CHECK (engine.getHistory (0).getCapacity() == cap0);
+    CHECK (engine.getHistory (1).getCapacity() == cap1);
+
+    // SpectralBlur isolation smoke: prepare once, many hops, finite output.
+    SpectralBlur blur;
+    blur.prepare (constants::numBins, 48000.0, constants::hopSize, 2);
+    std::vector<float> mags ((size_t) constants::numBins, 0.1f);
+    std::vector<float> phases ((size_t) constants::numBins, 0.0f);
+    SpectralBlurParams bp;
+    bp.timeSmearMs = 400.0f;
+    bp.freqSmearOctaves = 0.2f;
+    bp.phaseScatter = 0.8f;
+    bp.memoryBlend = 0.0f;
+    for (int h = 0; h < 200; ++h)
+    {
+        blur.processHop (0, mags.data(), phases.data(), nullptr, bp);
+        blur.processHop (1, mags.data(), phases.data(), nullptr, bp);
+    }
+    const float* bm = blur.getBlurMagnitudes (0);
+    const float* bp0 = blur.getBlurPhases (0);
+    CHECK (bm != nullptr && bp0 != nullptr);
+    for (int k = 0; k < constants::numBins; ++k)
+    {
+        CHECK (std::isfinite (bm[k]));
+        CHECK (std::isfinite (bp0[k]));
+    }
+    std::cout << "  history capacity stable; SpectralBlur hops finite\n";
 }
 
 void runEffectStrengthTests()
@@ -1199,7 +1444,11 @@ void runEffectStrengthTests()
     testRound2ShadowCentroidStability();
     testRound2ShadowBandDecayRatio();
     testRound2ShadowBurstRt60Independent();
-    testRound2MergeNotIdentity();
-    testRound2MergeFullMorph();
-    testRound2MergeMonotonic();
+    testRound3MergeCrestDissolve();
+    testRound3MergePhaseDecorrelation();
+    testRound3MergeBlurMonotonicCrest();
+    testRound3MergeStereoDecorrelation();
+    testRound3MergePinkSpectrumBalance();
+    testRound3MergeMixZeroNull();
+    testRound3MergeNoAlloc();
 }
