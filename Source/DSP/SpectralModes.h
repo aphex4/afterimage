@@ -17,7 +17,7 @@ enum class SpectralMode
 {
     Shadow = 0,
     Erase,
-    Merge
+    Merge // legacy DSP / unit tests only — removed from product UI & APVTS choices
 };
 
 /** Which buffer backs the engine's complex-add write path. */
@@ -341,9 +341,18 @@ private:
     {
         case SpectralMode::Shadow: return "SHADOW";
         case SpectralMode::Erase:  return "ERASE";
-        case SpectralMode::Merge:  return "MERGE";
+        case SpectralMode::Merge:  return "MERGE"; // legacy
     }
     return "SHADOW";
+}
+
+/** Map legacy saved mode index (0 Shadow / 1 Erase / 2 Merge) onto product modes. */
+[[nodiscard]] inline SpectralMode productModeFromChoiceIndex (int index) noexcept
+{
+    if (index == 1)
+        return SpectralMode::Erase;
+    // index 2 was Merge — session-compat maps to Shadow
+    return SpectralMode::Shadow;
 }
 
 } // namespace afterimage

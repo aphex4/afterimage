@@ -8,6 +8,9 @@
 #include "UI/GainMatchButton.h"
 #include "UI/MemoryWellComponent.h"
 #include "UI/ModeSelector.h"
+#include "UI/ParametricEqPanel.h"
+#include "UI/PostChainPanel.h"
+#include "UI/ScalePanel.h"
 #include "UI/SpectrumDisplay.h"
 #include "Utilities/FactoryPresets.h"
 
@@ -30,6 +33,7 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
 
+    enum class EditorView { Memory = 0, Scale, Eq };
     enum class DockGroup { Memory, Spectral, Output };
 
     struct DockItem
@@ -46,6 +50,8 @@ private:
     void wireRecall();
     void buildPresetMenu();
     void updateModeDynamicTooltips (afterimage::SpectralMode mode);
+    void setEditorView (EditorView view);
+    void refreshViewVisibility();
 
     AfterimageAudioProcessor& audioProcessor;
     AfterimageLookAndFeel lookAndFeel;
@@ -55,6 +61,9 @@ private:
     juce::Label memoryStatusLabel;
     juce::String cachedMemoryStatus_;
     juce::ComboBox presetBox;
+    juce::TextButton memoryViewBtn { "MEMORY" };
+    juce::TextButton scaleViewBtn { "SCALE" };
+    juce::TextButton eqViewBtn { "EQ" };
 
 #if defined (AFTERIMAGE_ENABLE_LICENSING)
     std::unique_ptr<LicensePanel> licensePanel;
@@ -64,6 +73,9 @@ private:
     ModeSelector modeSelector;
     SpectrumDisplay meterDisplay;
     MemoryWellComponent memoryWell;
+    PostChainPanel postChainPanel;
+    ScalePanel scalePanel;
+    ParametricEqPanel eqPanel;
 
     FreezeButton freezeButton;
     GainMatchButton gainMatchButton;
@@ -72,6 +84,7 @@ private:
     std::vector<std::unique_ptr<AfterimageKnob>> knobs;
     juce::Rectangle<float> dockBounds_;
     std::array<juce::Rectangle<float>, 2> dockDividers_ {};
+    EditorView editorView_ = EditorView::Memory;
 
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> freezeAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> gainMatchAttachment;

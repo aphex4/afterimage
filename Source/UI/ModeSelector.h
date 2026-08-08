@@ -6,7 +6,7 @@
 #include <functional>
 
 /**
-    Segmented SHADOW / ERASE / MERGE selector with animated selection pill.
+    Segmented SHADOW / ERASE selector with animated selection pill.
     Continues to drive host automation via onModeChanged.
 */
 class ModeSelector : public juce::Component,
@@ -36,7 +36,7 @@ private:
     [[nodiscard]] int modeIndex (afterimage::SpectralMode mode) const noexcept;
 
     afterimage::SpectralMode currentMode_ = afterimage::SpectralMode::Shadow;
-    float animPos_ = 0.0f; // 0..2 continuous for pill
+    float animPos_ = 0.0f; // 0..1 continuous for pill
     int hoverIndex_ = -1;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ModeSelector)

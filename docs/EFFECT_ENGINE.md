@@ -8,7 +8,28 @@ Preserves STFT (2048/512), latency, phase strategy (current-frame phase by defau
 |------|------|
 | **Shadow** | Multi-age spectral delay/reverb tail from stabilized memory profiles + diffusion. |
 | **Erase** | Spectral cleaning via relative-prominence familiarity map. |
-| **Merge** | Log-envelope morph between short current profile and stabilized memory. |
+
+**Merge** was removed from the product surface (UI / APVTS choices / presets). Legacy saved `mode=Merge` migrates to **Shadow**. Merge DSP remains available to unit tests only.
+
+## Full signal order
+
+```text
+Input
+  → SpectralEngine (STFT + Shadow/Erase)
+  → latency-aligned dry delay
+  → equal-power Mix
+  → Formant
+  → De-esser
+  → Post Reverb (Pre-EQ → verb → Post-EQ, wet blend)
+  → Pitch path (exclusive): Off | Scale Snap | Auto-Tune
+  → Parametric EQ (8-band; Stereo / LR / MS)
+  → Gain Match (vs latency-aligned dry)
+  → Bypass → entitlement dry → Output Gain
+  → Output  (I/O meters: dry reference vs final audible)
+```
+
+Editor views: **Memory** (Well + post-chain modules + dock), **Scale** (Snap / Auto-Tune), **EQ**.
+**MATCH** lives in the global top bar on every view.
 
 ## Core principle: memory is a short moment
 

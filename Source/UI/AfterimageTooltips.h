@@ -32,11 +32,6 @@ inline constexpr const char* influenceShadow =
     "Controls how strongly the remembered sound is added to the current sound.\n"
     "Higher values create a stronger ghost effect.";
 
-inline constexpr const char* influenceMerge =
-    "INFLUENCE\n"
-    "Controls how much the current sound takes on the tonal character of the remembered sound.\n"
-    "Higher values create a stronger transformation.";
-
 inline constexpr const char* influenceErase =
     "INFLUENCE\n"
     "Controls how strongly repeated frequencies are removed.\n"
@@ -56,11 +51,6 @@ inline constexpr const char* blurErase =
     "BLUR\n"
     "Widens the frequencies removed by Erase.\n"
     "Higher values carve broader, less precise hollows.";
-
-inline constexpr const char* blurMerge =
-    "BLUR\n"
-    "Widens the tonal envelope Merge borrows from memory.\n"
-    "Higher values soften detail and deepen the blend.";
 
 inline constexpr const char* blur =
     "BLUR\n"
@@ -105,10 +95,6 @@ inline constexpr const char* shadow =
     "SHADOW\n"
     "Creates a smooth spectral tail from earlier audio. It behaves like a delay or reverb made from remembered frequencies.";
 
-inline constexpr const char* merge =
-    "MERGE\n"
-    "Blurs the current sound together with remembered audio. Higher settings create a softer, more blended spectral texture.";
-
 inline constexpr const char* erase =
     "ERASE\n"
     "Reduces frequencies that keep repeating over time. New material stays clearer while familiar content is gradually removed.";
@@ -125,13 +111,47 @@ inline constexpr const char* recallRing =
 
 inline constexpr const char* inputMeter =
     "INPUT METER\n"
-    "Shows the level entering the plugin.\n"
+    "Shows the latency-aligned dry level (the Gain Match reference).\n"
     "Avoid clipping before processing.";
 
 inline constexpr const char* outputMeter =
     "OUTPUT METER\n"
-    "Shows the level leaving the plugin.\n"
-    "Use it to monitor the final output level.";
+    "Shows the final audible output after Match, Bypass, and Output Gain.\n"
+    "With Match on, this should agree with the dry reference level.";
+
+inline constexpr const char* reverb =
+    "REVERB\n"
+    "Conventional algorithmic reverb after the spectral Mix.\n"
+    "Use a little wet to smooth grainy Shadow tails.";
+
+inline constexpr const char* reverbWet =
+    "REVERB WET\n"
+    "Blends the post-chain reverb with the dry spectral mix.\n"
+    "0% is off. Modest values smooth Shadow tails.";
+
+inline constexpr const char* reverbType =
+    "REVERB TYPE\n"
+    "Spring, Hall, or Room character for the post-chain reverb.";
+
+inline constexpr const char* formant =
+    "FORMANT\n"
+    "Shifts vowel-like tone colour from Low to High.\n"
+    "Centre is neutral. Conventional filter-bank colour, not a pitch shifter.";
+
+inline constexpr const char* deEsser =
+    "DE-ESSER\n"
+    "Reduces harsh high frequencies dynamically.\n"
+    "Intensity only — higher values duck sibilance more.";
+
+inline constexpr const char* preEq =
+    "PRE EQ\n"
+    "Shapes the signal entering the reverb.\n"
+    "Four peaking bands with a live spectrum view.";
+
+inline constexpr const char* postEq =
+    "POST EQ\n"
+    "Shapes the reverb return before it blends back.\n"
+    "Four peaking bands with a live spectrum view.";
 
 inline constexpr const char* preset =
     "PRESET\n"
@@ -158,7 +178,7 @@ inline constexpr const char* memoryStatus =
     switch (mode)
     {
         case SpectralMode::Erase:  return influenceErase;
-        case SpectralMode::Merge:  return influenceMerge;
+        case SpectralMode::Merge:  // legacy
         case SpectralMode::Shadow: return influenceShadow;
     }
     return influenceShadow;
@@ -169,7 +189,7 @@ inline constexpr const char* memoryStatus =
     switch (mode)
     {
         case SpectralMode::Erase:  return blurErase;
-        case SpectralMode::Merge:  return blurMerge;
+        case SpectralMode::Merge:  // legacy
         case SpectralMode::Shadow: return blurShadow;
     }
     return blurShadow;
@@ -180,7 +200,7 @@ inline constexpr const char* memoryStatus =
     switch (mode)
     {
         case SpectralMode::Erase:  return erase;
-        case SpectralMode::Merge:  return merge;
+        case SpectralMode::Merge:  // legacy → present as Shadow
         case SpectralMode::Shadow: return shadow;
     }
     return shadow;

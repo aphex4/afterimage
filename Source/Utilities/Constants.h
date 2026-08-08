@@ -75,26 +75,38 @@ namespace constants
     constexpr float  gainMatchSilenceCloseDb  = -80.0f; // close gate below this
     constexpr float  gainMatchPowerEpsilon    = 1.0e-20f;
 
-    // Plugin tail: max memory + FFT latency @ 44.1 kHz + reconstruction margin.
+    // Plugin tail: max memory + FFT latency @ 44.1 kHz + reconstruction margin + post reverb.
     // Freeze can sustain indefinitely; hosts require a finite value (documented).
     constexpr double pluginTailMemorySec = (double) memoryLengthMaxSec;
     constexpr double pluginTailFftLatencySec = (double) fftSize / 44100.0;
     constexpr double pluginTailMarginSec = 0.25;
+    constexpr double pluginTailReverbSec = 4.0; // conventional post-chain reverb decay budget
     constexpr double pluginTailLengthSec = pluginTailMemorySec
                                          + pluginTailFftLatencySec
-                                         + pluginTailMarginSec;
+                                         + pluginTailMarginSec
+                                         + pluginTailReverbSec;
 
     // Random Recall: slow LPF wander around Recall Position (not per-hop chaos)
     constexpr float  randomRecallMaxDepth  = 0.35f;  // max |age| offset at Random = 100%
     constexpr float  randomRecallCutoffHz  = 0.28f;  // wander bandwidth
 
     // -------------------------------------------------------------------------
+    // Post-chain FX (after Mix, before Gain Match)
+    // -------------------------------------------------------------------------
+    constexpr float  formantSmoothSec    = 0.05f;
+    constexpr float  deEsserSmoothSec    = 0.03f;
+    constexpr float  reverbWetSmoothSec  = 0.05f;
+    constexpr int    spectrumProbeBins   = 48;
+    constexpr int    spectrumProbeFftOrder = 9; // 512
+    constexpr int    eqBandsPerStage     = 4;
+
+    // -------------------------------------------------------------------------
     // UI
     // -------------------------------------------------------------------------
-    constexpr int    editorDefaultWidth  = 1000;
-    constexpr int    editorDefaultHeight = 720;
-    constexpr int    editorMinWidth      = 800;
-    constexpr int    editorMinHeight     = 560;
+    constexpr int    editorDefaultWidth  = 1180;
+    constexpr int    editorDefaultHeight = 780;
+    constexpr int    editorMinWidth      = 980;
+    constexpr int    editorMinHeight     = 640;
     constexpr int    uiTimerHz           = 60;
     /** Wall-clock license refresh while the editor is open (message thread only). */
     constexpr int    licenseRefreshIntervalSec = 45;
@@ -118,6 +130,77 @@ namespace constants
     inline constexpr const char* idBypass            = "bypass";
     // New optional bool (default off). Old sessions without this ID load fine via APVTS.
     inline constexpr const char* idGainMatch         = "gainMatch";
+
+    // Post-chain (new IDs — absent from older sessions → APVTS defaults).
+    inline constexpr const char* idReverbType        = "reverbType";   // 0 Spring, 1 Hall, 2 Room
+    inline constexpr const char* idReverbWet         = "reverbWet";
+    inline constexpr const char* idFormant           = "formant";      // 0=Low … 0.5=center … 1=High
+    inline constexpr const char* idDeEsser           = "deEsser";      // intensity 0..1
+
+    inline constexpr const char* idPreEq1Freq        = "preEq1Freq";
+    inline constexpr const char* idPreEq1Gain        = "preEq1Gain";
+    inline constexpr const char* idPreEq2Freq        = "preEq2Freq";
+    inline constexpr const char* idPreEq2Gain        = "preEq2Gain";
+    inline constexpr const char* idPreEq3Freq        = "preEq3Freq";
+    inline constexpr const char* idPreEq3Gain        = "preEq3Gain";
+    inline constexpr const char* idPreEq4Freq        = "preEq4Freq";
+    inline constexpr const char* idPreEq4Gain        = "preEq4Gain";
+
+    inline constexpr const char* idPostEq1Freq       = "postEq1Freq";
+    inline constexpr const char* idPostEq1Gain       = "postEq1Gain";
+    inline constexpr const char* idPostEq2Freq       = "postEq2Freq";
+    inline constexpr const char* idPostEq2Gain       = "postEq2Gain";
+    inline constexpr const char* idPostEq3Freq       = "postEq3Freq";
+    inline constexpr const char* idPostEq3Gain       = "postEq3Gain";
+    inline constexpr const char* idPostEq4Freq       = "postEq4Freq";
+    inline constexpr const char* idPostEq4Gain       = "postEq4Gain";
+
+    inline constexpr const char* kPreEqFreqIds[eqBandsPerStage] = {
+        idPreEq1Freq, idPreEq2Freq, idPreEq3Freq, idPreEq4Freq
+    };
+    inline constexpr const char* kPreEqGainIds[eqBandsPerStage] = {
+        idPreEq1Gain, idPreEq2Gain, idPreEq3Gain, idPreEq4Gain
+    };
+    inline constexpr const char* kPostEqFreqIds[eqBandsPerStage] = {
+        idPostEq1Freq, idPostEq2Freq, idPostEq3Freq, idPostEq4Freq
+    };
+    inline constexpr const char* kPostEqGainIds[eqBandsPerStage] = {
+        idPostEq1Gain, idPostEq2Gain, idPostEq3Gain, idPostEq4Gain
+    };
+
+    // Default EQ centre frequencies (Hz)
+    inline constexpr float kDefaultEqFreqs[eqBandsPerStage] = {
+        200.0f, 800.0f, 2500.0f, 8000.0f
+    };
+
+    // Scale Accentuator / Auto-Tune (Phase B)
+    inline constexpr const char* idPitchPath         = "pitchPath";      // 0 Off, 1 Scale Snap, 2 Auto-Tune
+    inline constexpr const char* idScaleRoot         = "scaleRoot";      // 0=C .. 11=B
+    inline constexpr const char* idScaleType         = "scaleType";      // 0 Major, 1 Natural Minor, 2 Dorian, 3 Pentatonic Maj, 4 Pentatonic Min, 5 Chromatic
+    inline constexpr const char* idScaleColor        = "scaleColor";     // 0..2 (1=100% wet; >1 resonance)
+    inline constexpr const char* idScaleTransient    = "scaleTransient"; // 0..1 transient preserve for scale snap
+    inline constexpr const char* idRetuneSpeed       = "retuneSpeed";    // 0..1 (0 slow/natural, 1 fast/robotic)
+    inline constexpr const char* idHumanize          = "humanize";       // 0..1
+
+    inline constexpr float retuneSmoothSecMin = 0.008f;
+    inline constexpr float retuneSmoothSecMax = 0.35f;
+
+    // Parametric EQ (Phase C) — last creative stage before Gain Match
+    constexpr int    parametricEqBands   = 8;
+    inline constexpr const char* idEqChannelMode     = "eqChannelMode"; // 0 Stereo, 1 LR, 2 MS
+
+    // Per-band IDs use eqN* where N=1..8 (helpers below).
+    inline constexpr const char* idEq1On = "eq1On";
+    inline constexpr const char* idEq1Type = "eq1Type";
+    inline constexpr const char* idEq1Freq = "eq1Freq";
+    inline constexpr const char* idEq1Gain = "eq1Gain";
+    inline constexpr const char* idEq1Q = "eq1Q";
+    inline constexpr const char* idEq1X4 = "eq1X4";
+    inline constexpr const char* idEq1Solo = "eq1Solo";
+
+    inline constexpr float kDefaultParaEqFreqs[parametricEqBands] = {
+        40.0f, 80.0f, 200.0f, 500.0f, 1200.0f, 3000.0f, 7000.0f, 12000.0f
+    };
 
     inline float dbToGain (float db) noexcept
     {

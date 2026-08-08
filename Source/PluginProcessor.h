@@ -7,6 +7,13 @@
 #include "DSP/SpectralModes.h"
 #include "DSP/DryWetMixer.h"
 #include "DSP/GainMatch.h"
+#include "DSP/FormantShifter.h"
+#include "DSP/DeEsser.h"
+#include "DSP/PostChainReverb.h"
+#include "DSP/ScaleAccentuator.h"
+#include "DSP/AutoTune.h"
+#include "DSP/ScaleTheory.h"
+#include "DSP/ParametricEQ.h"
 #include "DSP/VisualizationAtomics.h"
 #include "Utilities/Constants.h"
 #include "Utilities/FactoryPresets.h"
@@ -16,22 +23,24 @@
 #endif
 
 #include <atomic>
+#include <array>
 #include <vector>
 
 /**
-    AFTERIMAGE spectral memory processor (Shadow / Erase / Merge).
+    AFTERIMAGE spectral memory processor (Shadow / Erase).
 
     Routing (documented):
       1) latency-aligned dry + processed wet (identity STFT + spectral modes)
       2) equal-power dry/wet Mix → mixed
-      3) Gain Match: one broadband scalar on mixed (dry vs mixed power, not wet-only)
-      4) bypass crossfade (toward latency-aligned dry)
-      5) trial-entitlement dry crossfade (if licensing enabled)
-      6) final Output Gain  ← after bypass so it always trims the audible output
+      3) Formant shifter
+      4) De-esser
+      5) Post-chain Reverb (Pre-EQ → verb → Post-EQ)
+      6) Pitch path (exclusive): Off | Scale Snap | Auto-Tune
+      7) Parametric EQ (8-band, last creative stage)
+      8) Gain Match (broadband scalar vs latency-aligned dry)
+      9) bypass → entitlement dry → Output Gain
 
-    Mix=0% → GM measures dry vs dry → ~unity. Bypass=100% → dry unaltered by GM.
-    Host callbacks larger than maxInternalBlockSize are processed in fixed chunks
-    using preallocated scratch (no audio-thread allocation).
+    Meters: input = latency-aligned dry; output = final audible buffer.
 */
 class AfterimageAudioProcessor : public juce::AudioProcessor
 {
@@ -48,16 +57,14 @@ public:
     bool hasEditor() const override { return true; }
 
     const juce::String getName() const override { return JucePlugin_Name; }
-    bool acceptsMidi() const override { return false; }
+    bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
 
-    /**
-        Finite tail for hosts: max memory + FFT latency @ 44.1 kHz + margin.
-        Freeze can sustain indefinitely; the host API requires a finite value —
-        that limitation is intentional (see constants::pluginTailLengthSec).
-    */
-    double getTailLengthSeconds() const override { return afterimage::constants::pluginTailLengthSec; }
+    double getTailLengthSeconds() const override
+    {
+        return afterimage::constants::pluginTailLengthSec;
+    }
 
     int getNumPrograms() override;
     int getCurrentProgram() override;
@@ -65,10 +72,7 @@ public:
     const juce::String getProgramName (int index) override;
     void changeProgramName (int index, const juce::String& newName) override;
 
-    /** True when APVTS does not match the reported factory program index. */
     bool isCustomProgram() const noexcept { return customProgram_; }
-
-    /** Re-evaluate factory vs Custom from live APVTS (UI timer / after edits). */
     void refreshProgramStatus() noexcept { syncProgramIndexFromParameters(); }
 
     void getStateInformation (juce::MemoryBlock& destData) override;
@@ -76,35 +80,38 @@ public:
 
     juce::AudioProcessorValueTreeState& getAPVTS() noexcept { return apvts; }
     afterimage::SpectralEngine& getEngine() noexcept { return engine; }
+    afterimage::PostChainReverb& getPostReverb() noexcept { return postReverb_; }
+    afterimage::ParametricEQ& getParametricEQ() noexcept { return parametricEq_; }
 
     afterimage::SpectralMode getCurrentMode() const noexcept;
 
-    /** UI-safe visualization reads (atomics / snapshot publisher only). */
     const afterimage::VisualizationAtomics& getVisualization() const noexcept { return engine.getVisualization(); }
     afterimage::SnapshotPublisher& getSnapshotPublisher() noexcept { return engine.getSnapshotPublisher(); }
 
     float getInputLevel() const noexcept  { return engine.getVisualization().loadInputPeak(); }
     float getOutputLevel() const noexcept { return engine.getVisualization().loadOutputPeak(); }
     float getHistoryFill() const noexcept { return engine.getVisualization().loadHistoryFill(); }
-
-    /** Debug / tests: current Gain Match detector correction in dB (runs even when GM is off). */
     float getGainMatchCorrectionDb() const noexcept { return gainMatch_.loadDebugCorrectionDb(); }
+
+    /** MIDI-driven pitch-class mask (0 = use APVTS scale only). */
+    std::uint16_t getMidiScaleMask() const noexcept
+    {
+        return midiScaleMask_.load (std::memory_order_relaxed);
+    }
 
 #if defined (AFTERIMAGE_ENABLE_LICENSING)
     afterimage::licensing::LicenseManager& getLicenseManager() noexcept { return licenseManager_; }
 #endif
 
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
-
-    /** Reset Gain Match detector / correction (presets & state load). */
     void resetAdaptiveProcessingState() noexcept;
-
-    /** Apply a restored APVTS ValueTree (setStateInformation + migration tests). */
     void applyRestoredParameterTree (const juce::ValueTree& tree);
+    static void migrateLegacyParameterTree (juce::ValueTree& tree);
 
 private:
     void updateParameterTargets();
     void syncProgramIndexFromParameters() noexcept;
+    void handleMidi (const juce::MidiBuffer& midi) noexcept;
     void processChunk (juce::AudioBuffer<float>& wetChunk,
                        juce::AudioBuffer<float>& dryInChunk,
                        juce::AudioBuffer<float>& delayedDryChunk) noexcept;
@@ -114,6 +121,12 @@ private:
     afterimage::ParameterSmoother smoothers;
     afterimage::DryWetMixer dryWetMixer;
     afterimage::GainMatchController gainMatch_;
+    afterimage::FormantShifter formant_;
+    afterimage::DeEsser deEsser_;
+    afterimage::PostChainReverb postReverb_;
+    afterimage::ScaleAccentuator scaleAccent_;
+    afterimage::AutoTune autoTune_;
+    afterimage::ParametricEQ parametricEq_;
 
     juce::AudioBuffer<float> inputScratch;
     juce::AudioBuffer<float> delayedDry;
@@ -137,6 +150,34 @@ private:
     std::atomic<float>* pMix = nullptr;
     std::atomic<float>* pBypass = nullptr;
     std::atomic<float>* pGainMatch = nullptr;
+    std::atomic<float>* pReverbType = nullptr;
+    std::atomic<float>* pReverbWet = nullptr;
+    std::atomic<float>* pFormant = nullptr;
+    std::atomic<float>* pDeEsser = nullptr;
+    std::atomic<float>* pPitchPath = nullptr;
+    std::atomic<float>* pScaleRoot = nullptr;
+    std::atomic<float>* pScaleType = nullptr;
+    std::atomic<float>* pScaleColor = nullptr;
+    std::atomic<float>* pScaleTransient = nullptr;
+    std::atomic<float>* pRetuneSpeed = nullptr;
+    std::atomic<float>* pHumanize = nullptr;
+    std::atomic<float>* pEqChannelMode = nullptr;
+
+    std::array<std::atomic<float>*, afterimage::constants::eqBandsPerStage> pPreEqFreq {};
+    std::array<std::atomic<float>*, afterimage::constants::eqBandsPerStage> pPreEqGain {};
+    std::array<std::atomic<float>*, afterimage::constants::eqBandsPerStage> pPostEqFreq {};
+    std::array<std::atomic<float>*, afterimage::constants::eqBandsPerStage> pPostEqGain {};
+
+    std::array<std::atomic<float>*, afterimage::constants::parametricEqBands> pEqOn {};
+    std::array<std::atomic<float>*, afterimage::constants::parametricEqBands> pEqType {};
+    std::array<std::atomic<float>*, afterimage::constants::parametricEqBands> pEqFreq {};
+    std::array<std::atomic<float>*, afterimage::constants::parametricEqBands> pEqGain {};
+    std::array<std::atomic<float>*, afterimage::constants::parametricEqBands> pEqQ {};
+    std::array<std::atomic<float>*, afterimage::constants::parametricEqBands> pEqX4 {};
+    std::array<std::atomic<float>*, afterimage::constants::parametricEqBands> pEqSolo {};
+
+    std::array<bool, 128> midiNoteHeld_ {};
+    std::atomic<std::uint16_t> midiScaleMask_ { 0 };
 
     int currentProgram_ = 0;
     bool customProgram_ = false;

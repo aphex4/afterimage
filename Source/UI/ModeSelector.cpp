@@ -5,6 +5,11 @@
 
 #include <cmath>
 
+namespace
+{
+constexpr int kNumModes = 2; // Shadow / Erase (Merge removed from product)
+}
+
 ModeSelector::ModeSelector()
 {
     setWantsKeyboardFocus (true);
@@ -22,30 +27,33 @@ int ModeSelector::modeIndex (afterimage::SpectralMode mode) const noexcept
 {
     switch (mode)
     {
-        case afterimage::SpectralMode::Shadow: return 0;
         case afterimage::SpectralMode::Erase:  return 1;
-        case afterimage::SpectralMode::Merge:  return 2;
+        case afterimage::SpectralMode::Shadow:
+        case afterimage::SpectralMode::Merge:  // legacy → display as Shadow
+        default: return 0;
     }
-    return 0;
 }
 
 juce::Rectangle<float> ModeSelector::segmentBounds (int index) const noexcept
 {
     auto r = getLocalBounds().toFloat().reduced (2.0f);
-    const float w = r.getWidth() / 3.0f;
+    const float w = r.getWidth() / (float) kNumModes;
     return { r.getX() + w * (float) index, r.getY(), w, r.getHeight() };
 }
 
 afterimage::SpectralMode ModeSelector::modeAt (juce::Point<float> p) const noexcept
 {
-    for (int i = 0; i < 3; ++i)
+    for (int i = 0; i < kNumModes; ++i)
         if (segmentBounds (i).contains (p))
-            return static_cast<afterimage::SpectralMode> (i);
+            return i == 1 ? afterimage::SpectralMode::Erase
+                          : afterimage::SpectralMode::Shadow;
     return currentMode_;
 }
 
 void ModeSelector::setMode (afterimage::SpectralMode mode)
 {
+    if (mode == afterimage::SpectralMode::Merge)
+        mode = afterimage::SpectralMode::Shadow;
     currentMode_ = mode;
     if (hoverIndex_ < 0)
         setTooltip (afterimage::tooltips::modeFor (mode));
@@ -76,7 +84,8 @@ void ModeSelector::mouseMove (const juce::MouseEvent& e)
     if (h != hoverIndex_)
     {
         hoverIndex_ = h;
-        setTooltip (afterimage::tooltips::modeFor (static_cast<afterimage::SpectralMode> (h)));
+        setTooltip (afterimage::tooltips::modeFor (h == 1 ? afterimage::SpectralMode::Erase
+                                                          : afterimage::SpectralMode::Shadow));
         repaint();
     }
 }
@@ -106,11 +115,12 @@ bool ModeSelector::keyPressed (const juce::KeyPress& key)
     if (key == juce::KeyPress::leftKey || key == juce::KeyPress::upKey)
         idx = juce::jmax (0, idx - 1);
     else if (key == juce::KeyPress::rightKey || key == juce::KeyPress::downKey)
-        idx = juce::jmin (2, idx + 1);
+        idx = juce::jmin (kNumModes - 1, idx + 1);
     else
         return false;
 
-    const auto mode = static_cast<afterimage::SpectralMode> (idx);
+    const auto mode = idx == 1 ? afterimage::SpectralMode::Erase
+                               : afterimage::SpectralMode::Shadow;
     if (mode != currentMode_)
     {
         currentMode_ = mode;
@@ -131,9 +141,8 @@ void ModeSelector::paint (juce::Graphics& g)
     g.setColour (AfterimageLookAndFeel::panelEdge());
     g.drawRoundedRectangle (bounds.reduced (0.5f), 8.0f, 1.0f);
 
-    // Selection pill
     {
-        const float segW = (bounds.getWidth() - 4.0f) / 3.0f;
+        const float segW = (bounds.getWidth() - 4.0f) / (float) kNumModes;
         auto pill = juce::Rectangle<float> (bounds.getX() + 2.0f + animPos_ * segW,
                                             bounds.getY() + 2.0f,
                                             segW,
@@ -144,10 +153,10 @@ void ModeSelector::paint (juce::Graphics& g)
         g.drawRoundedRectangle (pill.reduced (0.5f), 6.0f, 1.0f);
     }
 
-    static constexpr const char* labels[] = { "SHADOW", "ERASE", "MERGE" };
+    static constexpr const char* labels[] = { "SHADOW", "ERASE" };
     g.setFont (AfterimageFonts::get (AfterimageFontRole::Mode));
 
-    for (int i = 0; i < 3; ++i)
+    for (int i = 0; i < kNumModes; ++i)
     {
         const auto seg = segmentBounds (i);
         const bool selected = modeIndex (currentMode_) == i;

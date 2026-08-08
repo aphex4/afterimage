@@ -22,6 +22,7 @@ int gFailures = 0;
 void runEffectStrengthTests();
 void runLicensingTests();
 void runGainMatchTests();
+int runScaleTheoryTests();
 
 #define CHECK(cond) \
     do { \
@@ -1426,6 +1427,7 @@ int main()
     runEffectStrengthTests();
     runLicensingTests();
     runGainMatchTests();
+    gFailures += runScaleTheoryTests();
 
     afterimage::measure::runEffectStrengthMeasurements (
         afterimage::measure::envWantsMeasurements());

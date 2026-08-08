@@ -120,7 +120,7 @@ juce_add_plugin(AFTERIMAGE
     PRODUCT_NAME            "AFTERIMAGE"
     BUNDLE_ID               "com.adamaudio.afterimage"
     IS_SYNTH                FALSE
-    NEEDS_MIDI_INPUT        FALSE
+    NEEDS_MIDI_INPUT        TRUE
     NEEDS_MIDI_OUTPUT       FALSE
     IS_MIDI_EFFECT          FALSE
     # Keep FALSE so DAW hosts retain primary keyboard focus. ModeSelector still
@@ -210,6 +210,7 @@ add_executable(AFTERIMAGE_Tests
     Tests/EffectStrengthTests.cpp
     Tests/LicensingTests.cpp
     Tests/GainMatchTests.cpp
+    Tests/ScaleTheoryTests.cpp
     Source/PluginProcessor.cpp
     ${AFTERIMAGE_DSP_SOURCES}
     ${AFTERIMAGE_LICENSING_SOURCES})
@@ -235,7 +236,7 @@ target_compile_definitions(AFTERIMAGE_Tests
         JucePlugin_ManufacturerCode=0x4164616d
         JucePlugin_PluginCode=0x4166496d
         JucePlugin_IsSynth=0
-        JucePlugin_WantsMidiInput=0
+        JucePlugin_WantsMidiInput=1
         JucePlugin_ProducesMidiOutput=0
         JucePlugin_IsMidiEffect=0
         JucePlugin_EditorRequiresKeyboardFocus=0

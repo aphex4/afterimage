@@ -14,7 +14,7 @@ Marketing version: **1.0.0-rc.1** (CMake/JUCE VersionCode stays `1.0.0` / `0x100
 
 It does **not** use a normal delay or reverb as the core. It runs an **overlap-add STFT**, stores a circular buffer of **spectral frames**, builds a stabilized **SpectralMemoryProfile** (~200 ms Gaussian window) for recall, and lets the live spectrum interact with that memory.
 
-Modes: **Shadow**, **Erase**, **Merge** — all implemented. Factory presets are grouped by mode (not subtle/medium/extreme). Stereo Link is deferred. Status: **release candidate** — do not claim READY FOR V1.0 without ear audition.
+Modes: **Shadow**, **Erase** (Merge removed from product; legacy sessions → Shadow). Post-chain reverb/formant/de-esser, exclusive Scale Snap / Auto-Tune, 8-band parametric EQ, three editor views (Memory / Scale / EQ), MATCH in global top bar. Factory presets grouped by Shadow / Erase. Stereo Link deferred. Status: **release candidate** — do not claim READY FOR V1.0 without ear audition.
 
 ---
 

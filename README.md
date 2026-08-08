@@ -5,7 +5,7 @@
 AFTERIMAGE is a real-time spectral memory processor. It continuously analyzes and stores a short history of the signal’s spectral content so the present can interact with its own recent past — producing evolving spectral echoes, ghost harmonics, frequency suppression, and morphing textures.
 
 > **Current milestone: 1.0.0-rc.1 (Release Candidate)**  
-> Not ear-signed-off for final v1.0. Shadow / Erase / Merge use stabilized **SpectralMemoryProfile** recall (multi-age Shadow, familiarity Erase, dual-profile Merge), perceptual Influence, Gain Match, mode-grouped factory presets, Memory Well, Ed25519 license activation, and validation tests.
+> Not ear-signed-off for final v1.0. Product modes are **Shadow / Erase** (Merge removed; legacy sessions map to Shadow). Post-chain reverb/formant/de-esser, exclusive Scale Snap / Auto-Tune, 8-band parametric EQ, Gain Match, three editor views (Memory / Scale / EQ), Memory Well, licensing, and validation tests.
 
 ### Versioning choice
 
@@ -24,13 +24,13 @@ Do **not** claim READY FOR V1.0 without DAW ear A/B.
 - Per-channel spectral history; Freeze captures a stabilized recent memory profile
 - **Shadow** — multi-age spectral tail / ghost from diffused memory profiles
 - **Erase** — relative-prominence familiarity carve (repeated content hollows out)
-- **Merge** — log-envelope morph between a short current profile and recalled memory
-- **Random Recall** — slow smoothed wander around Recall Position
-- **Gain Match** — broadband loudness trim of the completed mix vs latency-aligned dry
-- Factory presets grouped by mode (Shadow / Erase / Merge banks)
-- Shared controls: Recall (ring), Forget (retention floor), Blur (mode-specific), Transient Preserve, Influence (perceptual curve), Mix, Output, Freeze, Bypass
+- **Post-chain** — Formant, De-esser, conventional Reverb (Spring/Hall/Room + Pre/Post EQ)
+- **Scale view** — exclusive Scale Snap or Auto-Tune (Retune Speed + Humanize); MIDI root/chord
+- **EQ view** — 8-band parametric EQ (last creative stage): Bell/Shelf/Cut/Notch, ×4 slopes, Solo, Stereo/LR/MS
+- **Gain Match** — broadband loudness trim of the completed chain vs latency-aligned dry (MATCH in global top bar)
+- Three editor views: **Memory | Scale | EQ**
+- Factory presets grouped by Shadow / Erase
 - Offline licensing: 14-day trial, signed `.afterimage-license`, compact activation UI
-- ~80 ms click-free crossfade when switching modes
 - Memory Well particle visualization (DSP-seeded)
 - Formats: **VST3**, **AU** (macOS), **Standalone**
 
@@ -40,12 +40,14 @@ Do **not** claim READY FOR V1.0 without DAW ear A/B.
 
 | Stage | Role |
 |-------|------|
-| STFT (FFT 2048 / hop 512 / Hann) | Analysis & resynthesis |
-| Spectral history buffer | Circular store of magnitude/phase frames (0.1–10 s) |
-| SpectralMemoryProfile | ~200 ms Gaussian-weighted recall window (+ variance stability) |
-| Modes | Shadow, Erase, Merge (see [docs/EFFECT_ENGINE.md](docs/EFFECT_ENGINE.md)) |
-| Blur / Forget / Transients / Random | Mode-specific blur, age weighting, attack preservation, recall wander |
-| Dry/wet | Latency-compensated equal-power mix |
+| STFT (FFT 4096 / hop 512 / Hann) | Analysis & resynthesis |
+| Spectral history + SpectralMemoryProfile | Recall window |
+| Modes | Shadow, Erase (see [docs/EFFECT_ENGINE.md](docs/EFFECT_ENGINE.md)) |
+| Mix | Latency-compensated equal-power dry/wet |
+| Formant → De-esser → Reverb | Post-spectral colour / smooth |
+| Pitch path | Off \| Scale Snap \| Auto-Tune (exclusive) |
+| Parametric EQ | 8-band, last creative stage |
+| Gain Match → Bypass → Output | Level match + utility |
 
 ---
 
