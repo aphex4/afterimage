@@ -230,14 +230,8 @@ private:
                                           int channelIndex,
                                           bool updateSmoothers) noexcept;
 
-    void applyEnergyPolicy (SpectralMode mode,
-                            float* magnitudes,
-                            int numBins,
-                            double energyIn,
-                            double energyOut,
-                            float mappedInfluence,
-                            int channelIndex,
-                            bool updateSmoothers) noexcept;
+    /** Prevents runaway without referencing instantaneous input energy. */
+    void applyAbsoluteCeiling (float* magnitudes, int numBins, int channelIndex) noexcept;
 
     void sanitizeMagnitudes (float* magnitudes, int numBins) noexcept;
 
@@ -309,7 +303,9 @@ private:
     std::vector<float> mergeCurProfileScratch_;
     std::vector<float> mergeOutScratch_;
 
-    std::vector<float> energyScaleSmoothed_;
+    std::vector<float> energyScaleSmoothed_; // diagnostic alias of ceilingScale_
+    std::vector<float> runningPeak_;
+    std::vector<float> ceilingScale_;
     std::vector<float> transientSmoothed_;
 
     // Per-channel Erase familiarity + mask temporal smooth + ghost phase

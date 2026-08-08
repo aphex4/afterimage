@@ -40,12 +40,12 @@ MixReport probeMix (SpectralMode mode,
 {
     MixReport r;
     r.mappedInfluence = mapInfluenceForMode (mode, influence);
-    r.historyWeight = remappedHistoryWeight (mode, recallAge, forget);
+    r.historyWeight = remappedHistoryWeight (mode, recallAge, forget); // retained for logs only
     const float preserve = juce::jlimit (0.0f, 1.0f, transientPreserve);
     const float reduction = juce::jlimit (0.0f, 1.0f, transientStrength)
                             * preserve * kMaxTransientReduction;
-    const float effective = r.mappedInfluence * (1.0f - reduction);
-    r.mixAmount = effective * r.historyWeight;
+    // Phase 4: mixAmount no longer multiplies remappedHistoryWeight / retention floor.
+    r.mixAmount = r.mappedInfluence * (1.0f - reduction);
     return r;
 }
 

@@ -15,15 +15,18 @@ constexpr float kForgetDecayMax = 8.0f;
 constexpr float kEnergyEpsilon = 1.0e-12f;
 constexpr float kInfluenceEpsilon = 1.0e-5f;
 constexpr float kModeAmountEpsilon = 1.0e-4f;
-constexpr float kEnergySmoothCoeff = 0.22f;
 constexpr float kTransientSmoothCoeff = 0.35f;
 constexpr float kSilenceEnergyThresh = 1.0e-10f;
 
 // Shadow multi-age tail
 constexpr int   kShadowNumTaps = 5;
 constexpr float kShadowTapAges01[kShadowNumTaps] = { 0.00f, 0.18f, 0.38f, 0.62f, 0.88f };
-constexpr float kShadowMaxBoostDb = 3.5f; // +2..+4 dB allowance
-constexpr float kContrastLimitDb = 15.0f;
+constexpr float kContrastLimitDb = 30.0f;
+
+// Absolute ceiling (~+12 dBFS vs unit-sine FFT peak ≈ N/2)
+constexpr float kAbsoluteCeilingAttackMs = 5.0f;
+constexpr float kAbsoluteCeilingReleaseMs = 2000.0f;
+constexpr float kAbsoluteCeilingRampMs = 500.0f;
 
 // Erase familiarity
 constexpr float kEraseFamiliarityKnee = 0.12f;
@@ -37,10 +40,6 @@ constexpr int   kEraseBroadEnvRadius = 14;
 constexpr float kMergeDbEpsilon = 1.0e-8f;
 constexpr float kMergeCurrentProfileMs = 70.0f;
 constexpr int   kMergeEnvBaseRadius = 12;
-// Soft energy match: almost full unity pull, tiny musical residual (±1.25 dB).
-// Prior ±2.5 dB @ 80% left mid-Influence morphs amplifying ~4–6 dB before GM.
-constexpr float kMergeSoftMatchAmount = 0.94f;
-constexpr float kMergeMaxResidualDb = 1.25f;
 
 #if defined (AFTERIMAGE_DEBUG_AUDITION)
 constexpr DebugAudition kDebugAudition = static_cast<DebugAudition> (AFTERIMAGE_DEBUG_AUDITION);
@@ -52,11 +51,17 @@ constexpr DebugAudition kDebugAudition = DebugAudition::Normal;
 {
     switch (mode)
     {
-        case SpectralMode::Shadow: return 1.70f;
-        case SpectralMode::Erase:  return 2.05f;
-        case SpectralMode::Merge:  return 1.45f;
+        case SpectralMode::Shadow: return 1.30f;
+        case SpectralMode::Erase:  return 1.50f;
+        case SpectralMode::Merge:  return 1.20f;
     }
-    return 1.70f;
+    return 1.30f;
+}
+
+[[nodiscard]] float absoluteCeilingThreshold() noexcept
+{
+    // Unit-amplitude sine ≈ fftSize/2 in JUCE unnormalized real FFT magnitudes.
+    return constants::dbToGain (12.0f) * 0.5f * static_cast<float> (constants::fftSize);
 }
 
 [[nodiscard]] double sumSq (const float* m, int n) noexcept
@@ -185,7 +190,7 @@ void applyPerBinContrastLimiter (float* magnitudes,
     boxBlurMagnitudes (magnitudes, scratchNeighborhood, numBins, kNeighborRadius, prefixScratch);
 
     const float maxRatio = constants::dbToGain (std::max (6.0f, maxRelativePeakDb));
-    const float softKnee = 0.65f;
+    const float softKnee = 0.35f;
 
     for (int i = 0; i < numBins; ++i)
     {
@@ -307,6 +312,8 @@ void SpectralModeProcessor::prepare (int numBins, double sampleRate, int numChan
     mergeOutScratch_.assign (static_cast<std::size_t> (numBins_), 0.0f);
 
     energyScaleSmoothed_.assign (static_cast<std::size_t> (numChannels_), 1.0f);
+    runningPeak_.assign (static_cast<std::size_t> (numChannels_), 0.0f);
+    ceilingScale_.assign (static_cast<std::size_t> (numChannels_), 1.0f);
     transientSmoothed_.assign (static_cast<std::size_t> (numChannels_), 0.0f);
 
     eraseFamiliarity_.assign (static_cast<std::size_t> (numChannels_),
@@ -347,6 +354,8 @@ void SpectralModeProcessor::reset()
     std::fill (mergeCurProfileScratch_.begin(), mergeCurProfileScratch_.end(), 0.0f);
     std::fill (mergeOutScratch_.begin(), mergeOutScratch_.end(), 0.0f);
     std::fill (energyScaleSmoothed_.begin(), energyScaleSmoothed_.end(), 1.0f);
+    std::fill (runningPeak_.begin(), runningPeak_.end(), 0.0f);
+    std::fill (ceilingScale_.begin(), ceilingScale_.end(), 1.0f);
     std::fill (transientSmoothed_.begin(), transientSmoothed_.end(), 0.0f);
     std::fill (eraseFamiliarityFrozen_.begin(), eraseFamiliarityFrozen_.end(), false);
 
@@ -402,7 +411,8 @@ void SpectralModeProcessor::ensureChannelState (int channelIndex) noexcept
         return;
 
     const auto need = static_cast<std::size_t> (channelIndex + 1);
-    jassert (need <= energyScaleSmoothed_.size());
+    jassert (need <= ceilingScale_.size());
+    jassert (need <= runningPeak_.size());
     jassert (need <= transientSmoothed_.size());
     jassert (need <= eraseFamiliarity_.size());
     juce::ignoreUnused (need);
@@ -410,11 +420,11 @@ void SpectralModeProcessor::ensureChannelState (int channelIndex) noexcept
 
 float SpectralModeProcessor::getLastEnergyScale (int channelIndex) const noexcept
 {
-    if (energyScaleSmoothed_.empty())
+    if (ceilingScale_.empty())
         return 1.0f;
     const auto ch = static_cast<std::size_t> (
-        juce::jlimit (0, static_cast<int> (energyScaleSmoothed_.size()) - 1, channelIndex));
-    return energyScaleSmoothed_[ch];
+        juce::jlimit (0, static_cast<int> (ceilingScale_.size()) - 1, channelIndex));
+    return ceilingScale_[ch];
 }
 
 const float* SpectralModeProcessor::getEraseFamiliarityEnvelope (int channelIndex) const noexcept
@@ -519,83 +529,47 @@ float SpectralModeProcessor::computeMixAmount (SpectralMode mode,
     const float preserve = juce::jlimit (0.0f, 1.0f, params.transientPreserve);
     const float mapped = mapInfluenceForMode (mode, params.influence);
     const float reduction = trSmooth * preserve * kMaxTransientReduction;
-    float effectiveInfluence = mapped * (1.0f - juce::jlimit (0.0f, 1.0f, reduction));
-    effectiveInfluence = juce::jlimit (0.0f, 1.0f, effectiveInfluence);
-
-    const float historyWeight = remappedHistoryWeight (mode, params.recallAge01, params.forget);
-    return effectiveInfluence * historyWeight;
+    const float duck = 1.0f - juce::jlimit (0.0f, 1.0f, reduction);
+    return juce::jlimit (0.0f, 1.0f, mapped * duck);
 }
 
-void SpectralModeProcessor::applyEnergyPolicy (SpectralMode mode,
-                                               float* magnitudes,
-                                               int numBins,
-                                               double energyIn,
-                                               double energyOut,
-                                               float mappedInfluence,
-                                               int channelIndex,
-                                               bool updateSmoothers) noexcept
+void SpectralModeProcessor::applyAbsoluteCeiling (float* magnitudes,
+                                                  int numBins,
+                                                  int channelIndex) noexcept
 {
+    if (magnitudes == nullptr || numBins <= 0)
+        return;
+
     ensureChannelState (channelIndex);
     const auto ch = static_cast<std::size_t> (juce::jlimit (0, numChannels_ - 1, channelIndex));
 
+    float framePeak = 0.0f;
+    for (int i = 0; i < numBins; ++i)
+        framePeak = std::max (framePeak, magnitudes[i]);
+
+    const float hopSec = static_cast<float> (constants::hopSize)
+                         / static_cast<float> (std::max (1.0e-6, sampleRate_));
+    const float attackCoeff = 1.0f - std::exp (-hopSec / (kAbsoluteCeilingAttackMs * 0.001f));
+    const float releaseCoeff = 1.0f - std::exp (-hopSec / (kAbsoluteCeilingReleaseMs * 0.001f));
+    const float rampCoeff = 1.0f - std::exp (-hopSec / (kAbsoluteCeilingRampMs * 0.001f));
+
+    float& peak = runningPeak_[ch];
+    if (framePeak > peak)
+        peak += (framePeak - peak) * attackCoeff;
+    else
+        peak += (framePeak - peak) * releaseCoeff;
+
+    const float threshold = absoluteCeilingThreshold();
     float targetScale = 1.0f;
-    const float mapped = juce::jlimit (0.0f, 1.0f, mappedInfluence);
+    if (peak > threshold && peak > 1.0e-12f)
+        targetScale = threshold / peak;
 
-    if (energyOut > static_cast<double> (kEnergyEpsilon)
-        && energyIn > static_cast<double> (kEnergyEpsilon))
-    {
-        const float outOverIn = static_cast<float> (std::sqrt (energyOut / energyIn));
+    float& scale = ceilingScale_[ch];
+    scale += (targetScale - scale) * rampCoeff;
+    scale = juce::jlimit (0.05f, 1.0f, scale);
+    energyScaleSmoothed_[ch] = scale; // keep diagnostic alias populated
 
-        switch (mode)
-        {
-            case SpectralMode::Shadow:
-            {
-                const float allowedDb = mapped * kShadowMaxBoostDb;
-                const float allowedLin = constants::dbToGain (allowedDb);
-                if (outOverIn > allowedLin)
-                    targetScale = allowedLin / outOverIn;
-                else
-                    targetScale = 1.0f;
-                targetScale = juce::jlimit (constants::dbToGain (-6.0f), 1.0f, targetScale);
-                break;
-            }
-
-            case SpectralMode::Erase:
-            {
-                if (outOverIn < 0.12f)
-                    targetScale = 0.12f / outOverIn;
-                else
-                    targetScale = 1.0f;
-                targetScale = juce::jlimit (1.0f, constants::dbToGain (2.0f), targetScale);
-                break;
-            }
-
-            case SpectralMode::Merge:
-            {
-                // Soft-match toward input energy, then hard-cap residual loudness.
-                const float matchScale = 1.0f / outOverIn;
-                float soft = 1.0f + (matchScale - 1.0f) * kMergeSoftMatchAmount;
-                const float residualLin = std::max (1.0e-8f, outOverIn * soft);
-                const float residualDb = constants::gainToDb (residualLin);
-                if (residualDb > kMergeMaxResidualDb)
-                    soft *= constants::dbToGain (kMergeMaxResidualDb) / residualLin;
-                else if (residualDb < -kMergeMaxResidualDb)
-                    soft *= constants::dbToGain (-kMergeMaxResidualDb) / residualLin;
-                targetScale = soft;
-                break;
-            }
-        }
-    }
-
-    float scale = energyScaleSmoothed_[ch];
-    if (updateSmoothers)
-    {
-        scale += (targetScale - scale) * kEnergySmoothCoeff;
-        scale = juce::jlimit (0.25f, 4.0f, scale);
-        energyScaleSmoothed_[ch] = scale;
-    }
-
-    if (std::abs (scale - 1.0f) > 1.0e-6f)
+    if (scale < 1.0f - 1.0e-6f)
     {
         for (int i = 0; i < numBins; ++i)
             magnitudes[i] *= scale;
@@ -733,8 +707,6 @@ void SpectralModeProcessor::buildShadowTail (float* dest,
         std::copy (diffuseScratchB_.begin(), diffuseScratchB_.begin() + numBins, dest);
     }
 
-    applyPerBinContrastLimiter (dest, numBins, kContrastLimitDb,
-                                limiterScratch_.data(), prefixScratch_.data());
     sanitizeMagnitudes (dest, numBins);
 }
 
@@ -753,7 +725,6 @@ void SpectralModeProcessor::applyShadowPath (float* magnitudes,
                      params, channelIndex, updateSmoothers);
 
     const float mixAmount = computeMixAmount (SpectralMode::Shadow, params, channelIndex, updateSmoothers);
-    const float mappedInf = mapInfluenceForMode (SpectralMode::Shadow, params.influence);
 
     if (shadowPhaseMode_ == ShadowPhaseMode::PropagatedGhostPhase && updateSmoothers)
         advanceGhostPhases (numBins, channelIndex);
@@ -783,47 +754,18 @@ void SpectralModeProcessor::applyShadowPath (float* magnitudes,
     {
         for (int i = 0; i < numBins; ++i)
             shadowTailScratch_[static_cast<std::size_t> (i)] *= mixAmount;
-        // Energy policy applied to (current + ghost) estimate without mutating current yet
-        double energyIn = 0.0;
-        double energyOut = 0.0;
-        for (int i = 0; i < numBins; ++i)
-        {
-            const float cur = magnitudes[i];
-            const float out = cur + shadowTailScratch_[static_cast<std::size_t> (i)];
-            energyIn += static_cast<double> (cur) * static_cast<double> (cur);
-            energyOut += static_cast<double> (out) * static_cast<double> (out);
-        }
-        // Scale ghost only
-        float scale = 1.0f;
-        if (energyOut > static_cast<double> (kEnergyEpsilon)
-            && energyIn > static_cast<double> (kEnergyEpsilon))
-        {
-            const float outOverIn = static_cast<float> (std::sqrt (energyOut / energyIn));
-            const float allowedLin = constants::dbToGain (mappedInf * kShadowMaxBoostDb);
-            if (outOverIn > allowedLin)
-                scale = allowedLin / outOverIn;
-        }
-        for (int i = 0; i < numBins; ++i)
-            shadowTailScratch_[static_cast<std::size_t> (i)] *= scale;
         return;
     }
-
-    double energyIn = 0.0;
-    double energyOut = 0.0;
 
     for (int i = 0; i < numBins; ++i)
     {
         const float cur = magnitudes[i];
         const float ghost = shadowTailScratch_[static_cast<std::size_t> (i)] * mixAmount;
-        const float out = cur + ghost;
-        magnitudes[i] = out;
-        energyIn += static_cast<double> (cur) * static_cast<double> (cur);
-        energyOut += static_cast<double> (out) * static_cast<double> (out);
+        magnitudes[i] = cur + ghost;
     }
 
-    applyEnergyPolicy (SpectralMode::Shadow, magnitudes, numBins, energyIn, energyOut, mappedInf,
-                       channelIndex, updateSmoothers);
-    applyPerBinContrastLimiter (magnitudes, numBins, kContrastLimitDb + 3.0f,
+    applyAbsoluteCeiling (magnitudes, numBins, channelIndex);
+    applyPerBinContrastLimiter (magnitudes, numBins, kContrastLimitDb,
                                 limiterScratch_.data(), prefixScratch_.data());
     sanitizeMagnitudes (magnitudes, numBins);
 }
@@ -950,8 +892,6 @@ void SpectralModeProcessor::applyErasePath (float* magnitudes,
                        prefixScratch_.data());
 
     auto& maskTemporal = eraseMaskSmoothed_[ch];
-    double energyIn = 0.0;
-    double energyOut = 0.0;
 
     for (int i = 0; i < numBins; ++i)
     {
@@ -977,13 +917,10 @@ void SpectralModeProcessor::applyErasePath (float* magnitudes,
 #endif
 
         magnitudes[i] = out;
-        energyIn += static_cast<double> (cur) * static_cast<double> (cur);
-        energyOut += static_cast<double> (out) * static_cast<double> (out);
     }
 
-    applyEnergyPolicy (SpectralMode::Erase, magnitudes, numBins, energyIn, energyOut, mappedInf,
-                       channelIndex, updateSmoothers);
-    applyPerBinContrastLimiter (magnitudes, numBins, kContrastLimitDb + 2.0f,
+    applyAbsoluteCeiling (magnitudes, numBins, channelIndex);
+    applyPerBinContrastLimiter (magnitudes, numBins, kContrastLimitDb,
                                 limiterScratch_.data(), prefixScratch_.data());
     sanitizeMagnitudes (magnitudes, numBins);
 }
@@ -1003,7 +940,6 @@ void SpectralModeProcessor::applyMergePath (float* magnitudes,
     const auto ch = static_cast<std::size_t> (juce::jlimit (0, numChannels_ - 1, channelIndex));
 
     const float mixAmount = computeMixAmount (SpectralMode::Merge, params, channelIndex, updateSmoothers);
-    const float mappedInf = mapInfluenceForMode (SpectralMode::Merge, params.influence);
     const float blur = juce::jlimit (0.0f, 1.0f, params.blur);
 
     if (mixAmount <= kInfluenceEpsilon)
@@ -1080,9 +1016,6 @@ void SpectralModeProcessor::applyMergePath (float* magnitudes,
     // Morph amount: Influence drives transfer; Blur widens / softens identity.
     const float morphAmount = juce::jlimit (0.0f, 1.0f, mixAmount * (0.55f + 0.45f * blur));
 
-    double energyIn = 0.0;
-    double energyOut = 0.0;
-
     for (int i = 0; i < numBins; ++i)
     {
         const float cur = magnitudes[i];
@@ -1107,12 +1040,9 @@ void SpectralModeProcessor::applyMergePath (float* magnitudes,
 #endif
 
         magnitudes[i] = out;
-        energyIn += static_cast<double> (cur) * static_cast<double> (cur);
-        energyOut += static_cast<double> (out) * static_cast<double> (out);
     }
 
-    applyEnergyPolicy (SpectralMode::Merge, magnitudes, numBins, energyIn, energyOut, mappedInf,
-                       channelIndex, updateSmoothers);
+    applyAbsoluteCeiling (magnitudes, numBins, channelIndex);
     applyPerBinContrastLimiter (magnitudes, numBins, kContrastLimitDb,
                                 limiterScratch_.data(), prefixScratch_.data());
     sanitizeMagnitudes (magnitudes, numBins);

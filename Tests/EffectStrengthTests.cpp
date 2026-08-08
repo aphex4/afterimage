@@ -408,7 +408,8 @@ void testMergeSilenceAndStereoIsolation()
     CHECK (fixtures::sumSq (b1.data(), constants::numBins) > 1e-6);
 }
 
-/** Mid Influence must not amp several dB before Gain Match (soft energy policy). */
+/** Mid Influence morph loudness is free of the old input-referenced energy policy.
+    Absolute ceiling stays inactive on normal fixtures; Gain Match owns trim. */
 void testMergeMidInfluenceEnergyBound()
 {
     std::cout << "Merge mid-Influence energy bound...\n";
@@ -425,7 +426,6 @@ void testMergeMidInfluenceEnergyBound()
         auto p = makeParams (influence, 0.25f, 0.35f, 0.45f);
         std::vector<float> cur;
 
-        // Settle energy smoother (same path as realtime hops).
         for (int frame = 0; frame < 48; ++frame)
         {
             cur = quietCarrier;
@@ -438,10 +438,10 @@ void testMergeMidInfluenceEnergyBound()
         std::cout << "  Influence " << (int) std::lround (influence * 100.0f)
                   << "% ampDb=" << ampDb << "\n";
         CHECK (std::isfinite (ampDb));
-        // Soft policy caps residual ≈ ±1.25 dB; allow small settle margin.
-        CHECK (ampDb < 1.75f);
-        CHECK (ampDb > -1.75f);
-        // Still morphs — not a no-op
+        // Without input-referenced energy policy, morph may change loudness freely.
+        CHECK (ampDb < 18.0f);
+        CHECK (ampDb > -18.0f);
+        CHECK (modes.getLastEnergyScale (0) > 0.99f); // absolute ceiling inactive
         CHECK (fixtures::logSpectralDistance (cur.data(), quietCarrier.data(),
                                               constants::numBins) > 0.05);
     }
