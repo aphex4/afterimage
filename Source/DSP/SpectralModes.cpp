@@ -30,14 +30,6 @@ constexpr float kContrastLimitDb = 30.0f;
 constexpr float kEraseDDAlpha = 0.98f;
 constexpr float kEraseMinStatBias = 1.5f;
 
-// Merge
-constexpr float kMergeDbEpsilon = 1.0e-8f;
-constexpr float kMergeEnvBaseOctaves = 0.5f;
-constexpr float kMergeEnvMaxOctaves = 2.0f;
-constexpr float kMergeSoftMatchAmount = 0.15f;
-constexpr float kMergeMaxResidualDb = 12.0f;
-constexpr float kMergeDetailKeepScale = 0.4f;
-
 #if defined (AFTERIMAGE_DEBUG_AUDITION)
 constexpr DebugAudition kDebugAudition = static_cast<DebugAudition> (AFTERIMAGE_DEBUG_AUDITION);
 #else
@@ -304,9 +296,6 @@ void SpectralModeProcessor::prepare (int numBins, double sampleRate, int numChan
     eraseMaskScratch_.assign (static_cast<std::size_t> (numBins_), 0.0f);
     eraseMaskSmoothScratch_.assign (static_cast<std::size_t> (numBins_), 0.0f);
     broadEnvScratch_.assign (static_cast<std::size_t> (numBins_), 0.0f);
-    mergeHistEnvScratch_.assign (static_cast<std::size_t> (numBins_), 0.0f);
-    mergeOutScratch_.assign (static_cast<std::size_t> (numBins_), 0.0f);
-    memorySmearedScratch_.assign (static_cast<std::size_t> (numBins_), 0.0f);
 
     energyScaleSmoothed_.assign (static_cast<std::size_t> (numChannels_), 1.0f);
     runningPeak_.assign (static_cast<std::size_t> (numChannels_), 0.0f);
@@ -338,10 +327,6 @@ void SpectralModeProcessor::prepare (int numBins, double sampleRate, int numChan
                 std::vector<float> (static_cast<std::size_t> (numBins_), 1.0e20f));
         }
     }
-
-    mergeMemorySmeared_.assign (static_cast<std::size_t> (numChannels_),
-                                std::vector<float> (static_cast<std::size_t> (numBins_), 0.0f));
-    mergeMemoryPrimed_.assign (static_cast<std::size_t> (numChannels_), false);
 
     spectralTail_.prepare (numBins_, sampleRate_, constants::hopSize, numChannels_);
     spectralBlur_.prepare (numBins_, sampleRate_, constants::hopSize, numChannels_);
@@ -375,18 +360,11 @@ void SpectralModeProcessor::reset()
     std::fill (eraseMaskScratch_.begin(), eraseMaskScratch_.end(), 0.0f);
     std::fill (eraseMaskSmoothScratch_.begin(), eraseMaskSmoothScratch_.end(), 0.0f);
     std::fill (broadEnvScratch_.begin(), broadEnvScratch_.end(), 0.0f);
-    std::fill (mergeHistEnvScratch_.begin(), mergeHistEnvScratch_.end(), 0.0f);
-    std::fill (mergeOutScratch_.begin(), mergeOutScratch_.end(), 0.0f);
-    std::fill (memorySmearedScratch_.begin(), memorySmearedScratch_.end(), 0.0f);
     std::fill (energyScaleSmoothed_.begin(), energyScaleSmoothed_.end(), 1.0f);
     std::fill (runningPeak_.begin(), runningPeak_.end(), 0.0f);
     std::fill (ceilingScale_.begin(), ceilingScale_.end(), 1.0f);
     std::fill (transientSmoothed_.begin(), transientSmoothed_.end(), 0.0f);
     std::fill (eraseFamiliarityFrozen_.begin(), eraseFamiliarityFrozen_.end(), false);
-    std::fill (mergeMemoryPrimed_.begin(), mergeMemoryPrimed_.end(), false);
-
-    for (auto& m : mergeMemorySmeared_)
-        std::fill (m.begin(), m.end(), 0.0f);
 
     spectralTail_.reset();
     spectralBlur_.reset();
@@ -941,126 +919,102 @@ void SpectralModeProcessor::applyErasePath (float* magnitudes,
 
 //==============================================================================
 void SpectralModeProcessor::applyMergePath (float* magnitudes,
+                                            const float* phases,
                                             const float* memoryMagnitudes,
                                             int numBins,
                                             const ModeParams& params,
                                             int channelIndex,
-                                            bool updateSmoothers) noexcept
+                                            bool updateSmoothers,
+                                            bool leaveDryForComplexWrite) noexcept
 {
-    if (magnitudes == nullptr || memoryMagnitudes == nullptr || numBins <= 0)
+    if (magnitudes == nullptr || numBins <= 0)
         return;
 
     ensureChannelState (channelIndex);
-    const auto ch = static_cast<std::size_t> (juce::jlimit (0, numChannels_ - 1, channelIndex));
 
     const float mixAmount = computeMixAmount (SpectralMode::Merge, params, channelIndex, updateSmoothers);
     const float blur = juce::jlimit (0.0f, 1.0f, params.blur);
 
     if (mixAmount <= kInfluenceEpsilon)
+    {
+        complexWrite_ = false;
+        complexWriteSource_ = ComplexWriteSource::None;
         return;
-
-    const float hopSec = static_cast<float> (constants::hopSize)
-                         / static_cast<float> (std::max (1.0, sampleRate_));
-    const float smearMs = juce::jlimit (150.0f, 3000.0f,
-                                        params.memoryLengthSeconds * 1000.0f * 0.35f);
-    const float smearCoeff = 1.0f - std::exp (-hopSec / (smearMs * 0.001f));
-
-    // B2: temporally smeared memory EMA (seed on cold start), then constant-Q by Blur.
-    auto& smeared = mergeMemorySmeared_[ch];
-    if (updateSmoothers && static_cast<int> (smeared.size()) >= numBins)
-    {
-        const bool cold = (ch >= mergeMemoryPrimed_.size()) || ! mergeMemoryPrimed_[ch];
-        for (int i = 0; i < numBins; ++i)
-        {
-            float& m = smeared[static_cast<std::size_t> (i)];
-            if (cold)
-                m = memoryMagnitudes[i];
-            else
-                m += smearCoeff * (memoryMagnitudes[i] - m);
-            memorySmearedScratch_[static_cast<std::size_t> (i)] = m;
-        }
-        if (ch < mergeMemoryPrimed_.size())
-            mergeMemoryPrimed_[ch] = true;
-    }
-    else if (static_cast<int> (smeared.size()) >= numBins)
-    {
-        std::copy (smeared.begin(), smeared.begin() + numBins, memorySmearedScratch_.begin());
-    }
-    else
-    {
-        std::copy (memoryMagnitudes, memoryMagnitudes + numBins, memorySmearedScratch_.begin());
     }
 
-    const float envOctaves = kMergeEnvBaseOctaves
-                             + blur * (kMergeEnvMaxOctaves - kMergeEnvBaseOctaves);
-    logSmoother_.setWidth (envOctaves);
-    logSmoother_.process (memorySmearedScratch_.data(), mergeHistEnvScratch_.data(),
-                          numBins, prefixScratch_.data());
+    const float* blurPhasesIn = phases;
+    if (blurPhasesIn == nullptr)
+    {
+        std::fill (shadowPhaseScratch_.begin(),
+                   shadowPhaseScratch_.begin() + numBins,
+                   0.0f);
+        blurPhasesIn = shadowPhaseScratch_.data();
+    }
+
+    SpectralBlurParams bp;
+    // Blur drives BOTH time and phase — signature control for Merge.
+    bp.timeSmearMs      = 25.0f + blur * blur * 1800.0f; // 25 ms .. ~1.8 s, curved
+    bp.freqSmearOctaves = 0.05f + blur * 0.25f;          // deliberately narrow
+    bp.phaseScatter     = 0.25f + blur * 0.70f;          // always some scatter
+    bp.memoryBlend      = juce::jlimit (0.0f, 1.0f, params.recallPosition);
+    bp.freeze           = params.freeze;                 // B3: lock EMA, keep phase alive
+
+    if (updateSmoothers)
+        spectralBlur_.processHop (channelIndex, magnitudes, blurPhasesIn, memoryMagnitudes, bp);
+
+    const float* blurMag = spectralBlur_.getBlurMagnitudes (channelIndex);
+    const float* blurPhase = spectralBlur_.getBlurPhases (channelIndex);
+    if (blurMag == nullptr || blurPhase == nullptr)
+    {
+        complexWrite_ = false;
+        complexWriteSource_ = ComplexWriteSource::None;
+        return;
+    }
+
+    const float morph = juce::jlimit (0.0f, 1.0f, mixAmount);
+
+    // Scattered phase sums incoherently under WOLA — compensate, scaled by scatter.
+    const float olaComp = 1.0f + bp.phaseScatter * (constants::incoherentOlaCompensation - 1.0f);
 
 #if defined (AFTERIMAGE_DEBUG_AUDITION)
-    if (kDebugAudition == DebugAudition::MemoryOnly)
+    if (kDebugAudition == DebugAudition::MemoryOnly
+        || kDebugAudition == DebugAudition::MergeDifferenceOnly)
     {
         for (int i = 0; i < numBins; ++i)
-            magnitudes[i] = mergeHistEnvScratch_[static_cast<std::size_t> (i)];
+        {
+            float out = blurMag[i];
+            if (kDebugAudition == DebugAudition::MergeDifferenceOnly)
+                out = std::abs (out - magnitudes[i]);
+            magnitudes[i] = out;
+        }
         sanitizeMagnitudes (magnitudes, numBins);
+        complexWrite_ = false;
+        complexWriteSource_ = ComplexWriteSource::None;
         return;
     }
 #else
     juce::ignoreUnused (kDebugAudition);
+    juce::ignoreUnused (blurPhase);
 #endif
 
-    // B1: full-spectrum log-domain morph; B3: keep some input fine structure at partial morph.
-    const float morphAmount = juce::jlimit (0.0f, 1.0f, mixAmount);
-    const float detailKeep = (1.0f - morphAmount) * (1.0f - blur);
-    constexpr float kOutDbFloor = -120.0f;
+    if (leaveDryForComplexWrite)
+    {
+        // Equal-power crossfade: attenuate dry here, engine adds the blur component.
+        const float dryGain = std::cos (morph * juce::MathConstants<float>::halfPi);
+        for (int i = 0; i < numBins; ++i)
+            magnitudes[i] *= dryGain;
 
-    double energyIn = 0.0;
-    double energyOut = 0.0;
+        complexWriteGain_ = std::sin (morph * juce::MathConstants<float>::halfPi) * olaComp;
+        complexWriteSource_ = ComplexWriteSource::MergeBlur;
+        complexWrite_ = true;
+        return;
+    }
 
+    // Unit-test / mode-crossfade fallback: magnitude-only blend, shared phase.
+    complexWrite_ = false;
+    complexWriteSource_ = ComplexWriteSource::None;
     for (int i = 0; i < numBins; ++i)
-    {
-        const float cur = magnitudes[i];
-        const float mem = mergeHistEnvScratch_[static_cast<std::size_t> (i)];
-
-        const float curDb = constants::gainToDb (cur + kMergeDbEpsilon);
-        const float memDb = constants::gainToDb (mem + kMergeDbEpsilon);
-        const float outDb = curDb + (memDb - curDb) * morphAmount;
-        // Blend a fraction of the current frame's detail back at partial morph.
-        const float finalDb = std::max (kOutDbFloor,
-                                        outDb + (curDb - outDb) * detailKeep * kMergeDetailKeepScale);
-
-        float out = constants::dbToGain (finalDb);
-
-#if defined (AFTERIMAGE_DEBUG_AUDITION)
-        if (kDebugAudition == DebugAudition::MergeDifferenceOnly)
-            out = std::abs (out - cur);
-#endif
-
-        magnitudes[i] = out;
-        energyIn += static_cast<double> (cur) * static_cast<double> (cur);
-        energyOut += static_cast<double> (out) * static_cast<double> (out);
-    }
-
-    // B4: soft residual loudness cap only — do not pull morph contour to input.
-    if (energyIn > static_cast<double> (kEnergyEpsilon)
-        && energyOut > static_cast<double> (kEnergyEpsilon))
-    {
-        const float outOverIn = static_cast<float> (std::sqrt (energyOut / energyIn));
-        const float residualDb = constants::gainToDb (std::max (1.0e-8f, outOverIn));
-        float soft = 1.0f;
-        if (residualDb > kMergeMaxResidualDb)
-            soft = constants::dbToGain (kMergeMaxResidualDb) / outOverIn;
-        else if (residualDb < -kMergeMaxResidualDb)
-            soft = constants::dbToGain (-kMergeMaxResidualDb) / outOverIn;
-        else
-            soft = 1.0f + ((1.0f / outOverIn) - 1.0f) * kMergeSoftMatchAmount;
-
-        if (std::abs (soft - 1.0f) > 1.0e-6f)
-        {
-            for (int i = 0; i < numBins; ++i)
-                magnitudes[i] *= soft;
-        }
-    }
+        magnitudes[i] = magnitudes[i] * (1.0f - morph) + blurMag[i] * morph * olaComp;
 
     applyAbsoluteCeiling (magnitudes, numBins, channelIndex);
     applyPerBinContrastLimiter (magnitudes, numBins, kContrastLimitDb,
@@ -1094,10 +1048,8 @@ void SpectralModeProcessor::applyModeMagnitudes (SpectralMode mode,
                             channelIndex, updateSmoothers);
             break;
         case SpectralMode::Merge:
-            complexWrite_ = false;
-            complexWriteSource_ = ComplexWriteSource::None;
-            applyMergePath (magnitudes, memoryMagnitudes, numBins, params,
-                            channelIndex, updateSmoothers);
+            applyMergePath (magnitudes, phases, memoryMagnitudes, numBins, params,
+                            channelIndex, updateSmoothers, leaveDryForComplexWrite);
             break;
     }
 }
@@ -1167,10 +1119,11 @@ bool SpectralModeProcessor::process (SpectralMode mode,
 
     if (! fading)
     {
-        const bool complexShadow = (targetMode_ == SpectralMode::Shadow);
+        const bool leaveDry = (targetMode_ == SpectralMode::Shadow
+                               || targetMode_ == SpectralMode::Merge);
         applyModeMagnitudes (targetMode_, frame.magnitudes.data(), frame.phases.data(),
                              memoryMagnitudes, history, n, params, channelIndex, true,
-                             complexShadow);
+                             leaveDry);
         return true;
     }
 

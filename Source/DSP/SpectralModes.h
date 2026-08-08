@@ -148,7 +148,7 @@ void writeInterleavedWithTail (float* interleavedFftData,
 
     Shadow: SpectralTail feedback accumulator + phase-vocoder ghost phase.
     Erase: relative-prominence familiarity map + mask blur.
-    Merge: full-spectrum log-domain morph against temporally smeared memory.
+    Merge: SpectralBlur phase-decorrelated temporal smear (complex write).
 */
 class SpectralModeProcessor
 {
@@ -270,11 +270,13 @@ private:
                          bool updateSmoothers) noexcept;
 
     void applyMergePath (float* magnitudes,
+                         const float* phases,
                          const float* memoryMagnitudes,
                          int numBins,
                          const ModeParams& params,
                          int channelIndex,
-                         bool updateSmoothers) noexcept;
+                         bool updateSmoothers,
+                         bool leaveDryForComplexWrite) noexcept;
 
     void updateEraseFamiliarity (const float* memoryMagnitudes,
                                  int numBins,
@@ -309,13 +311,10 @@ private:
     std::vector<float> diffuseScratchB_;
     std::vector<float> limiterScratch_;
 
-    // Erase / Merge scratch
+    // Erase scratch
     std::vector<float> eraseMaskScratch_;
     std::vector<float> eraseMaskSmoothScratch_;
     std::vector<float> broadEnvScratch_;
-    std::vector<float> mergeHistEnvScratch_;  // CQ-smoothed smeared memory
-    std::vector<float> mergeOutScratch_;
-    std::vector<float> memorySmearedScratch_; // EMA output before CQ smooth
 
     std::vector<float> energyScaleSmoothed_; // diagnostic alias of ceilingScale_
     std::vector<float> runningPeak_;
@@ -334,10 +333,6 @@ private:
     std::vector<bool> eraseFamiliarityFrozen_;
     // Legacy accessor backing (exposes famPow as "familiarity" envelope for viz/tests)
     std::vector<std::vector<float>> eraseFamiliarity_;
-
-    // Temporally smeared memory spectrum for Merge (Memory Length × 0.35)
-    std::vector<std::vector<float>> mergeMemorySmeared_;
-    std::vector<bool> mergeMemoryPrimed_;
 };
 
 [[nodiscard]] inline const char* spectralModeName (SpectralMode mode) noexcept
