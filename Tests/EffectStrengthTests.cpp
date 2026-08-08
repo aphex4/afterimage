@@ -106,20 +106,24 @@ void testRetentionFloor()
 }
 
 //==============================================================================
-/** Deterministic Shadow regression — multi-age tail must remain audible & finite. */
+/** Deterministic Shadow regression — SpectralTail must remain audible & finite. */
 void testShadowRegressionFixture()
 {
-    std::cout << "Shadow regression fixture (multi-age tail)...\n";
+    std::cout << "Shadow regression fixture (SpectralTail)...\n";
     SpectralModeProcessor modes;
     modes.prepare (constants::numBins, 48000.0, 1);
     modes.reset();
 
-    std::vector<float> cur, hist;
-    fixtures::fillChord (cur, 12.0f, 1.0f);
+    std::vector<float> hist;
     fixtures::fillSaw (hist, 9.0f, 0.85f);
 
     auto p = makeParams (0.40f, 0.25f, 0.12f, 0.40f);
-    modes.applyShadowMagnitudes (cur.data(), hist.data(), constants::numBins, p, 0);
+    std::vector<float> cur;
+    for (int hop = 0; hop < 48; ++hop)
+    {
+        fixtures::fillChord (cur, 12.0f, 1.0f);
+        modes.applyShadowMagnitudes (cur.data(), hist.data(), constants::numBins, p, 0);
+    }
 
     double checksum = 0.0;
     for (int i = 0; i < constants::numBins; ++i)
@@ -130,8 +134,7 @@ void testShadowRegressionFixture()
 
     CHECK (std::isfinite (checksum));
     CHECK (cur[12] >= 0.95f); // chord root present
-    CHECK (cur[9] > 0.15f);   // saw fundamental ghost present in tail
-    // Moderate Influence must add energy (additive Shadow identity)
+    CHECK (cur[9] > 0.08f);   // saw fundamental present in SpectralTail
     double histOnly = 0.0;
     {
         std::vector<float> base;
@@ -157,8 +160,12 @@ void testShadowEffectStrength()
     {
         modes.reset();
         std::vector<float> cur ((size_t) constants::numBins, 0.2f);
-        modes.applyShadowMagnitudes (cur.data(), hist.data(), constants::numBins,
-                                     makeParams (influence), 0);
+        for (int hop = 0; hop < 64; ++hop)
+        {
+            cur.assign ((size_t) constants::numBins, 0.2f);
+            modes.applyShadowMagnitudes (cur.data(), hist.data(), constants::numBins,
+                                         makeParams (influence), 0);
+        }
         return cur[40];
     };
 

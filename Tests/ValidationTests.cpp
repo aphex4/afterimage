@@ -312,23 +312,41 @@ static void testFreezeProfileCaptureAndLimiter()
     CHECK (mags[50] > 0.1f);
     CHECK (std::isfinite (mags[50]));
 
-    // Shadow tail decay: higher Forget → less old-tap energy
+    // Shadow SpectralTail: low Forget sustains longer after input stops
     SpectralModeProcessor modes;
     modes.prepare (constants::numBins, sr, 1);
     std::vector<float> destLow ((size_t) constants::numBins, 0.0f);
     std::vector<float> destHigh ((size_t) constants::numBins, 0.0f);
     ModeParams p;
-    p.influence = 0.5f;
+    p.influence = 1.0f;
     p.recallAge01 = 0.2f;
+    p.recallPosition = 0.0f;
     p.memoryLengthSeconds = 4.0f;
-    p.blur = 0.2f;
+    p.blur = 0.0f;
     p.forget = 0.1f;
-    modes.buildShadowTail (destLow.data(), constants::numBins, stabilized.getMagnitudes(),
-                           &hist, p, 0, true);
-    p.forget = 0.9f;
-    modes.reset();
-    modes.buildShadowTail (destHigh.data(), constants::numBins, stabilized.getMagnitudes(),
-                           &hist, p, 0, true);
+    p.transientPreserve = 0.0f;
+
+    auto warmAndRing = [&] (float forget, std::vector<float>& dest)
+    {
+        modes.reset();
+        p.forget = forget;
+        std::vector<float> silence ((size_t) constants::numBins, 0.0f);
+        for (int hop = 0; hop < 96; ++hop)
+        {
+            dest.assign ((size_t) constants::numBins, 0.05f);
+            modes.applyShadowMagnitudes (dest.data(), stabilized.getMagnitudes(),
+                                         constants::numBins, p, 0);
+        }
+        for (int hop = 0; hop < 48; ++hop)
+        {
+            dest = silence;
+            modes.applyShadowMagnitudes (dest.data(), silence.data(),
+                                         constants::numBins, p, 0);
+        }
+    };
+
+    warmAndRing (0.1f, destLow);
+    warmAndRing (0.9f, destHigh);
     double eLow = 0.0, eHigh = 0.0;
     for (int i = 0; i < constants::numBins; ++i)
     {
@@ -336,8 +354,8 @@ static void testFreezeProfileCaptureAndLimiter()
         eHigh += (double) destHigh[(size_t) i] * destHigh[(size_t) i];
         CHECK (std::isfinite (destLow[(size_t) i]));
     }
-    CHECK (eLow > eHigh * 0.85); // low Forget sustains more / comparable or higher energy
-    CHECK (eLow > 0.0 && eHigh > 0.0);
+    CHECK (eLow > eHigh * 1.05); // longer RT60 retains more after silence
+    CHECK (eLow > 0.0);
 
     // Engine Freeze capture + crossfade
     SpectralEngine engine;
@@ -541,10 +559,16 @@ static void testShadowMeasurableChange()
     p.transientPreserve = 0.0f;
     p.transientStrength = 0.0f;
     p.recallAge01 = 0.0f;
+    p.memoryLengthSeconds = 3.0f;
 
-    modes.applyShadowMagnitudes (frame.magnitudes.data(), hist.data(), constants::numBins, p, 0);
+    for (int hop = 0; hop < 48; ++hop)
+    {
+        for (int i = 0; i < constants::numBins; ++i)
+            frame.magnitudes[(size_t) i] = 0.2f;
+        modes.applyShadowMagnitudes (frame.magnitudes.data(), hist.data(), constants::numBins, p, 0);
+    }
 
-    CHECK (frame.magnitudes[40] > 0.2f + 0.1f); // ghost peak added
+    CHECK (frame.magnitudes[40] > 0.2f + 0.1f); // ghost peak added after accumulator warm-up
     for (int i = 0; i < constants::numBins; ++i)
         CHECK (std::isfinite (frame.magnitudes[(size_t) i]));
 }
@@ -609,9 +633,13 @@ static void testTransientPreserve()
         p.transientStrength = transient;
         p.recallAge01 = 0.0f;
 
-        // Reset energy/transient smoothers between runs
+        // Reset + warm SpectralTail so transient duck is measurable
         modes.reset();
-        modes.applyShadowMagnitudes (frame.magnitudes.data(), hist.data(), constants::numBins, p, 0);
+        for (int hop = 0; hop < 32; ++hop)
+        {
+            frame.magnitudes[20] = 1.0f;
+            modes.applyShadowMagnitudes (frame.magnitudes.data(), hist.data(), constants::numBins, p, 0);
+        }
         return frame.magnitudes[20];
     };
 

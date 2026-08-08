@@ -18,9 +18,7 @@ constexpr float kModeAmountEpsilon = 1.0e-4f;
 constexpr float kTransientSmoothCoeff = 0.35f;
 constexpr float kSilenceEnergyThresh = 1.0e-10f;
 
-// Shadow multi-age tail
-constexpr int   kShadowNumTaps = 5;
-constexpr float kShadowTapAges01[kShadowNumTaps] = { 0.00f, 0.18f, 0.38f, 0.62f, 0.88f };
+// Shadow multi-age tail (removed — SpectralTail)
 constexpr float kContrastLimitDb = 30.0f;
 
 // Absolute ceiling (~+12 dBFS vs unit-sine FFT peak ≈ N/2)
@@ -70,16 +68,6 @@ constexpr DebugAudition kDebugAudition = DebugAudition::Normal;
     for (int i = 0; i < n; ++i)
         e += static_cast<double> (m[i]) * static_cast<double> (m[i]);
     return e;
-}
-
-/** Forget → decay time in seconds for Shadow tap envelope. */
-[[nodiscard]] float forgetToDecaySeconds (float forget01, float memorySec) noexcept
-{
-    const float f = juce::jlimit (0.0f, 1.0f, forget01);
-    const float t = f * f;
-    // Low Forget → long tail (~0.85 * memory); high Forget → short (~0.08 * memory)
-    const float frac = 0.85f - t * 0.77f;
-    return juce::jlimit (0.05f, 10.0f, memorySec * frac);
 }
 } // namespace
 
@@ -253,30 +241,32 @@ void writeInterleavedFromMagnitudePhase (float* interleavedFftData,
     }
 }
 
-void writeInterleavedAdditiveGhost (float* interleavedFftData,
-                                    int fftSize,
-                                    const float* currentMagnitudes,
-                                    const float* currentPhases,
-                                    const float* ghostMagnitudes,
-                                    const float* ghostPhases,
-                                    int numBins) noexcept
+void writeInterleavedWithTail (float* interleavedFftData,
+                               int fftSize,
+                               const float* dryMagnitudes,
+                               const float* dryPhases,
+                               const float* tailMagnitudes,
+                               const float* tailPhases,
+                               float tailGain,
+                               int numBins) noexcept
 {
-    if (interleavedFftData == nullptr || currentMagnitudes == nullptr || currentPhases == nullptr)
+    if (interleavedFftData == nullptr || dryMagnitudes == nullptr || dryPhases == nullptr)
         return;
 
     const int nyquist = fftSize / 2;
     const int n = std::min (numBins, nyquist + 1);
-    const bool hasGhost = ghostMagnitudes != nullptr && ghostPhases != nullptr;
+    const bool hasTail = tailMagnitudes != nullptr && tailPhases != nullptr
+                         && std::abs (tailGain) > 1.0e-12f;
 
     for (int k = 0; k < n; ++k)
     {
-        float re = currentMagnitudes[k] * std::cos (currentPhases[k]);
-        float im = currentMagnitudes[k] * std::sin (currentPhases[k]);
+        float re = dryMagnitudes[k] * std::cos (dryPhases[k]);
+        float im = dryMagnitudes[k] * std::sin (dryPhases[k]);
 
-        if (hasGhost)
+        if (hasTail)
         {
-            re += ghostMagnitudes[k] * std::cos (ghostPhases[k]);
-            im += ghostMagnitudes[k] * std::sin (ghostPhases[k]);
+            re += tailGain * tailMagnitudes[k] * std::cos (tailPhases[k]);
+            im += tailGain * tailMagnitudes[k] * std::sin (tailPhases[k]);
         }
 
         interleavedFftData[2 * k] = re;
@@ -298,7 +288,8 @@ void SpectralModeProcessor::prepare (int numBins, double sampleRate, int numChan
     prefixScratch_.assign (static_cast<std::size_t> (numBins_ + 1), 0.0f);
     identityScratch_.assign (static_cast<std::size_t> (numBins_), 0.0f);
     crossfadeScratch_.assign (static_cast<std::size_t> (numBins_), 0.0f);
-    shadowTailScratch_.assign (static_cast<std::size_t> (numBins_), 0.0f);
+    shadowInjectScratch_.assign (static_cast<std::size_t> (numBins_), 0.0f);
+    shadowPhaseScratch_.assign (static_cast<std::size_t> (numBins_), 0.0f);
     diffuseScratchA_.assign (static_cast<std::size_t> (numBins_), 0.0f);
     diffuseScratchB_.assign (static_cast<std::size_t> (numBins_), 0.0f);
     limiterScratch_.assign (static_cast<std::size_t> (numBins_), 0.0f);
@@ -320,12 +311,12 @@ void SpectralModeProcessor::prepare (int numBins, double sampleRate, int numChan
                               std::vector<float> (static_cast<std::size_t> (numBins_), 0.0f));
     eraseMaskSmoothed_.assign (static_cast<std::size_t> (numChannels_),
                                std::vector<float> (static_cast<std::size_t> (numBins_), 0.0f));
-    ghostPhases_.assign (static_cast<std::size_t> (numChannels_),
-                         std::vector<float> (static_cast<std::size_t> (numBins_), 0.0f));
     eraseFamiliarityFrozen_.assign (static_cast<std::size_t> (numChannels_), false);
 
     mergeCurrentProfile_.assign (static_cast<std::size_t> (numChannels_),
                                  std::vector<float> (static_cast<std::size_t> (numBins_), 0.0f));
+
+    spectralTail_.prepare (numBins_, sampleRate_, constants::hopSize, numChannels_);
 
     reset();
 }
@@ -336,13 +327,16 @@ void SpectralModeProcessor::reset()
     targetMode_ = SpectralMode::Shadow;
     previousMode_ = SpectralMode::Shadow;
     modeCrossfade_ = 1.0f;
-    shadowPhaseMode_ = kDefaultShadowPhaseMode;
+    shadowComplexWrite_ = false;
+    lastShadowTailGain_ = 0.0f;
+    lastShadowDiffusion_ = 0.0f;
 
     std::fill (blurScratch_.begin(), blurScratch_.end(), 0.0f);
     std::fill (prefixScratch_.begin(), prefixScratch_.end(), 0.0f);
     std::fill (identityScratch_.begin(), identityScratch_.end(), 0.0f);
     std::fill (crossfadeScratch_.begin(), crossfadeScratch_.end(), 0.0f);
-    std::fill (shadowTailScratch_.begin(), shadowTailScratch_.end(), 0.0f);
+    std::fill (shadowInjectScratch_.begin(), shadowInjectScratch_.end(), 0.0f);
+    std::fill (shadowPhaseScratch_.begin(), shadowPhaseScratch_.end(), 0.0f);
     std::fill (diffuseScratchA_.begin(), diffuseScratchA_.end(), 0.0f);
     std::fill (diffuseScratchB_.begin(), diffuseScratchB_.end(), 0.0f);
     std::fill (limiterScratch_.begin(), limiterScratch_.end(), 0.0f);
@@ -359,11 +353,10 @@ void SpectralModeProcessor::reset()
     std::fill (transientSmoothed_.begin(), transientSmoothed_.end(), 0.0f);
     std::fill (eraseFamiliarityFrozen_.begin(), eraseFamiliarityFrozen_.end(), false);
 
-    for (auto& g : ghostPhases_)
-        std::fill (g.begin(), g.end(), 0.0f);
     for (auto& m : mergeCurrentProfile_)
         std::fill (m.begin(), m.end(), 0.0f);
 
+    spectralTail_.reset();
     clearEraseMemory();
 }
 
@@ -381,13 +374,14 @@ void SpectralModeProcessor::onFreezeEngaged() noexcept
     std::fill (eraseFamiliarityFrozen_.begin(), eraseFamiliarityFrozen_.end(), true);
 }
 
-const float* SpectralModeProcessor::getGhostPhases (int channelIndex) const noexcept
+const float* SpectralModeProcessor::getShadowTailMagnitudes (int channelIndex) const noexcept
 {
-    if (ghostPhases_.empty() || numBins_ <= 0)
-        return nullptr;
-    const auto ch = static_cast<std::size_t> (
-        juce::jlimit (0, static_cast<int> (ghostPhases_.size()) - 1, channelIndex));
-    return ghostPhases_[ch].data();
+    return spectralTail_.getTailMagnitudes (channelIndex);
+}
+
+const float* SpectralModeProcessor::getShadowTailPhases (int channelIndex) const noexcept
+{
+    return spectralTail_.getTailPhases (channelIndex);
 }
 
 void SpectralModeProcessor::setMode (SpectralMode mode) noexcept
@@ -587,182 +581,121 @@ void SpectralModeProcessor::sanitizeMagnitudes (float* magnitudes, int numBins) 
     }
 }
 
-void SpectralModeProcessor::advanceGhostPhases (int numBins, int channelIndex) noexcept
-{
-    ensureChannelState (channelIndex);
-    const auto ch = static_cast<std::size_t> (juce::jlimit (0, numChannels_ - 1, channelIndex));
-    auto& phases = ghostPhases_[ch];
-    if (static_cast<int> (phases.size()) < numBins)
-        return;
-
-    const float twoPi = juce::MathConstants<float>::twoPi;
-    const float hop = static_cast<float> (constants::hopSize);
-    const float fft = static_cast<float> (constants::fftSize);
-
-    for (int k = 0; k < numBins; ++k)
-    {
-        const float advance = twoPi * static_cast<float> (k) * hop / fft;
-        float& p = phases[static_cast<std::size_t> (k)];
-        p += advance;
-        // Wrap to [-pi, pi]
-        p = p - twoPi * std::floor ((p + juce::MathConstants<float>::pi) / twoPi);
-    }
-}
-
 //==============================================================================
-void SpectralModeProcessor::buildShadowTail (float* dest,
-                                             int numBins,
-                                             const float* memoryMagnitudes,
-                                             const SpectralHistoryBuffer* history,
-                                             const ModeParams& params,
-                                             int channelIndex,
-                                             bool updateSmoothers) noexcept
-{
-    juce::ignoreUnused (channelIndex, updateSmoothers);
-
-    if (dest == nullptr || numBins <= 0)
-        return;
-
-    std::fill (dest, dest + numBins, 0.0f);
-
-    const float memSec = juce::jlimit (constants::memoryLengthMinSec,
-                                       constants::memoryLengthMaxSec,
-                                       params.memoryLengthSeconds);
-    const float decaySec = forgetToDecaySeconds (params.forget, memSec);
-    const float recall = juce::jlimit (0.0f, 1.0f, params.recallAge01);
-
-    // Slow temporal diffusion: interpolate tap ages slightly toward neighbors
-    const float blur = juce::jlimit (0.0f, 1.0f, params.blur);
-    const float ageJitter = blur * 0.04f; // subtle, not random
-
-    float gainSum = 0.0f;
-    float tapGains[kShadowNumTaps];
-
-    float tapAges[kShadowNumTaps];
-    for (int t = 0; t < kShadowNumTaps; ++t)
-    {
-        // Taps span from Recall toward older memory; subtle Blur-linked age drift.
-        float age01 = recall + (1.0f - recall) * kShadowTapAges01[t];
-        age01 = juce::jlimit (0.0f, 1.0f, age01 + ageJitter * (static_cast<float> (t) - 2.0f) * 0.25f);
-        tapAges[t] = age01;
-
-        const float ageSec = age01 * memSec;
-        tapGains[t] = std::exp (-ageSec / std::max (0.05f, decaySec));
-        tapGains[t] = 0.18f + 0.82f * tapGains[t]; // retention floor
-        gainSum += tapGains[t];
-    }
-
-    if (gainSum > 1.0e-6f)
-    {
-        for (int t = 0; t < kShadowNumTaps; ++t)
-            tapGains[t] /= gainSum;
-    }
-
-    MemoryProfileOptions opts;
-    opts.windowMs = constants::memoryProfileWindowMs;
-    opts.applyStability = true;
-
-    for (int t = 0; t < kShadowNumTaps; ++t)
-    {
-        const float age01 = tapAges[t];
-        const float* src = memoryMagnitudes;
-
-        if (history != nullptr && tapProfile_ != nullptr && tapProfile_->isPrepared())
-        {
-            tapProfile_->buildFromHistory (*history, age01, opts);
-            src = tapProfile_->getMagnitudes();
-        }
-        else if (t == 0 && memoryMagnitudes != nullptr)
-        {
-            src = memoryMagnitudes;
-        }
-        else if (history != nullptr)
-        {
-            // Fallback: interpolated single frame (tests without tap scratch)
-            history->getInterpolatedMagnitudes (age01, blurScratch_.data(), numBins);
-            src = blurScratch_.data();
-        }
-        else if (memoryMagnitudes != nullptr)
-        {
-            src = memoryMagnitudes;
-        }
-        else
-        {
-            continue;
-        }
-
-        // Per-tap light diffusion scaled by tap age (older = more washed)
-        const float tapBlur = blur * (0.35f + 0.65f * kShadowTapAges01[t]);
-        diffuseMagnitudes (src, diffuseScratchA_.data(), numBins, tapBlur);
-
-        const float g = tapGains[t];
-        for (int k = 0; k < numBins; ++k)
-            dest[k] += g * diffuseScratchA_[static_cast<std::size_t> (k)];
-    }
-
-    // Global diffusion pass controlled by Blur
-    if (blur > 1.0e-4f)
-    {
-        diffuseMagnitudes (dest, diffuseScratchB_.data(), numBins, blur * 0.55f);
-        std::copy (diffuseScratchB_.begin(), diffuseScratchB_.begin() + numBins, dest);
-    }
-
-    sanitizeMagnitudes (dest, numBins);
-}
-
 void SpectralModeProcessor::applyShadowPath (float* magnitudes,
+                                             const float* phases,
                                              const float* memoryMagnitudes,
                                              const SpectralHistoryBuffer* history,
                                              int numBins,
                                              const ModeParams& params,
                                              int channelIndex,
-                                             bool updateSmoothers) noexcept
+                                             bool updateSmoothers,
+                                             bool leaveDryForComplexWrite) noexcept
 {
     if (magnitudes == nullptr || numBins <= 0)
         return;
 
-    buildShadowTail (shadowTailScratch_.data(), numBins, memoryMagnitudes, history,
-                     params, channelIndex, updateSmoothers);
+    juce::ignoreUnused (memoryMagnitudes);
 
-    const float mixAmount = computeMixAmount (SpectralMode::Shadow, params, channelIndex, updateSmoothers);
+    ensureChannelState (channelIndex);
 
-    if (shadowPhaseMode_ == ShadowPhaseMode::PropagatedGhostPhase && updateSmoothers)
-        advanceGhostPhases (numBins, channelIndex);
+    // Injection: live magnitudes, crossfaded toward recalled history as Recall rises.
+    // Without a history buffer (unit tests), memoryMagnitudes stand in as the inject source.
+    const float recallAmt = juce::jlimit (0.0f, 1.0f, params.recallPosition);
+    const float* injectMags = magnitudes;
+
+    if (history != nullptr && recallAmt > 1.0e-4f
+        && static_cast<int> (shadowInjectScratch_.size()) >= numBins)
+    {
+        history->getInterpolatedMagnitudes (params.recallAge01,
+                                            shadowInjectScratch_.data(),
+                                            numBins);
+        for (int i = 0; i < numBins; ++i)
+        {
+            shadowInjectScratch_[static_cast<std::size_t> (i)] =
+                magnitudes[i] * (1.0f - recallAmt)
+                + shadowInjectScratch_[static_cast<std::size_t> (i)] * recallAmt;
+        }
+        injectMags = shadowInjectScratch_.data();
+    }
+    else if (history == nullptr && memoryMagnitudes != nullptr)
+    {
+        injectMags = memoryMagnitudes;
+    }
+
+    const float* injectPhases = phases;
+    if (injectPhases == nullptr)
+    {
+        std::fill (shadowPhaseScratch_.begin(),
+                   shadowPhaseScratch_.begin() + numBins,
+                   0.0f);
+        injectPhases = shadowPhaseScratch_.data();
+    }
+
+    const float forget = juce::jlimit (0.0f, 1.0f, params.forget);
+    const float memSec = juce::jlimit (constants::memoryLengthMinSec,
+                                       constants::memoryLengthMaxSec,
+                                       params.memoryLengthSeconds);
+    const float blur = juce::jlimit (0.0f, 1.0f, params.blur);
+
+    SpectralTailParams tp;
+    tp.rt60Seconds = juce::jlimit (0.1f, 30.0f,
+                                   memSec * std::pow (4.0f, 1.0f - 2.0f * forget));
+    tp.hfDampRatio = 0.35f;
+    {
+        const float x = juce::jlimit (0.0f, 1.0f, params.influence);
+        float inject = (x <= 0.0f) ? 0.0f
+                     : (x >= 1.0f) ? 1.0f
+                                   : (1.0f - std::pow (1.0f - x, 1.5f));
+        const auto ch = static_cast<std::size_t> (juce::jlimit (0, numChannels_ - 1, channelIndex));
+        const float preserve = juce::jlimit (0.0f, 1.0f, params.transientPreserve);
+        const float reduction = transientSmoothed_[ch] * preserve * kMaxTransientReduction;
+        // Keep transient smoother warm even when Influence uses its own inject curve.
+        (void) computeMixAmount (SpectralMode::Shadow, params, channelIndex, updateSmoothers);
+        inject *= (1.0f - juce::jlimit (0.0f, 1.0f, reduction));
+        tp.injectGain = inject;
+    }
+    tp.diffusion = blur;
+    tp.shimmerCents = blur * 12.0f;
+    tp.freeze = params.freeze;
+
+    if (updateSmoothers)
+        spectralTail_.processHop (channelIndex, injectMags, injectPhases, tp);
+
+    const float mixAmount = mapInfluenceForMode (SpectralMode::Shadow, params.influence);
+    const float olaComp = 1.0f + tp.diffusion * (constants::incoherentOlaCompensation - 1.0f);
+    lastShadowDiffusion_ = tp.diffusion;
+    lastShadowTailGain_ = juce::jlimit (0.0f, 8.0f, mixAmount * olaComp);
+    shadowComplexWrite_ = leaveDryForComplexWrite;
+
+    const float* tailMag = spectralTail_.getTailMagnitudes (channelIndex);
+    if (tailMag == nullptr)
+        return;
 
 #if defined (AFTERIMAGE_DEBUG_AUDITION)
-    if (kDebugAudition == DebugAudition::MemoryOnly)
+    if (kDebugAudition == DebugAudition::MemoryOnly
+        || kDebugAudition == DebugAudition::ShadowTailOnly)
     {
         for (int i = 0; i < numBins; ++i)
-            magnitudes[i] = shadowTailScratch_[static_cast<std::size_t> (i)];
+            magnitudes[i] = tailMag[i] * (kDebugAudition == DebugAudition::ShadowTailOnly
+                                              ? lastShadowTailGain_ : 1.0f);
         sanitizeMagnitudes (magnitudes, numBins);
-        return;
-    }
-    if (kDebugAudition == DebugAudition::ShadowTailOnly)
-    {
-        for (int i = 0; i < numBins; ++i)
-            magnitudes[i] = shadowTailScratch_[static_cast<std::size_t> (i)] * mixAmount;
-        sanitizeMagnitudes (magnitudes, numBins);
+        shadowComplexWrite_ = false;
         return;
     }
 #else
     juce::ignoreUnused (kDebugAudition);
 #endif
 
-    // PropagatedGhostPhase: leave current magnitudes; engine composites with ghost phases.
-    // Default CurrentPhase: additive magnitude blend using current phase on writeback.
-    if (shadowPhaseMode_ == ShadowPhaseMode::PropagatedGhostPhase)
+    if (leaveDryForComplexWrite)
     {
-        for (int i = 0; i < numBins; ++i)
-            shadowTailScratch_[static_cast<std::size_t> (i)] *= mixAmount;
+        // Dry magnitudes untouched — engine composites via writeInterleavedWithTail.
         return;
     }
 
+    // Unit-test / mode-crossfade path: fold tail into magnitudes (shared phase).
     for (int i = 0; i < numBins; ++i)
-    {
-        const float cur = magnitudes[i];
-        const float ghost = shadowTailScratch_[static_cast<std::size_t> (i)] * mixAmount;
-        magnitudes[i] = cur + ghost;
-    }
+        magnitudes[i] += lastShadowTailGain_ * tailMag[i];
 
     applyAbsoluteCeiling (magnitudes, numBins, channelIndex);
     applyPerBinContrastLimiter (magnitudes, numBins, kContrastLimitDb,
@@ -1051,24 +984,28 @@ void SpectralModeProcessor::applyMergePath (float* magnitudes,
 //==============================================================================
 void SpectralModeProcessor::applyModeMagnitudes (SpectralMode mode,
                                                  float* magnitudes,
+                                                 const float* phases,
                                                  const float* memoryMagnitudes,
                                                  const SpectralHistoryBuffer* history,
                                                  int numBins,
                                                  const ModeParams& params,
                                                  int channelIndex,
-                                                 bool updateSmoothers) noexcept
+                                                 bool updateSmoothers,
+                                                 bool leaveDryForComplexWrite) noexcept
 {
     switch (mode)
     {
         case SpectralMode::Shadow:
-            applyShadowPath (magnitudes, memoryMagnitudes, history, numBins, params,
-                             channelIndex, updateSmoothers);
+            applyShadowPath (magnitudes, phases, memoryMagnitudes, history, numBins, params,
+                             channelIndex, updateSmoothers, leaveDryForComplexWrite);
             break;
         case SpectralMode::Erase:
+            shadowComplexWrite_ = false;
             applyErasePath (magnitudes, memoryMagnitudes, numBins, params,
                             channelIndex, updateSmoothers);
             break;
         case SpectralMode::Merge:
+            shadowComplexWrite_ = false;
             applyMergePath (magnitudes, memoryMagnitudes, numBins, params,
                             channelIndex, updateSmoothers);
             break;
@@ -1081,8 +1018,8 @@ void SpectralModeProcessor::applyShadowMagnitudes (float* magnitudes,
                                                    const ModeParams& params,
                                                    int channelIndex) noexcept
 {
-    applyModeMagnitudes (SpectralMode::Shadow, magnitudes, historyMagnitudes, nullptr,
-                         numBins, params, channelIndex, true);
+    applyModeMagnitudes (SpectralMode::Shadow, magnitudes, nullptr, historyMagnitudes, nullptr,
+                         numBins, params, channelIndex, true, false);
 }
 
 void SpectralModeProcessor::applyEraseMagnitudes (float* magnitudes,
@@ -1091,8 +1028,8 @@ void SpectralModeProcessor::applyEraseMagnitudes (float* magnitudes,
                                                   const ModeParams& params,
                                                   int channelIndex) noexcept
 {
-    applyModeMagnitudes (SpectralMode::Erase, magnitudes, historyMagnitudes, nullptr,
-                         numBins, params, channelIndex, true);
+    applyModeMagnitudes (SpectralMode::Erase, magnitudes, nullptr, historyMagnitudes, nullptr,
+                         numBins, params, channelIndex, true, false);
 }
 
 void SpectralModeProcessor::applyMergeMagnitudes (float* magnitudes,
@@ -1101,8 +1038,8 @@ void SpectralModeProcessor::applyMergeMagnitudes (float* magnitudes,
                                                   const ModeParams& params,
                                                   int channelIndex) noexcept
 {
-    applyModeMagnitudes (SpectralMode::Merge, magnitudes, historyMagnitudes, nullptr,
-                         numBins, params, channelIndex, true);
+    applyModeMagnitudes (SpectralMode::Merge, magnitudes, nullptr, historyMagnitudes, nullptr,
+                         numBins, params, channelIndex, true, false);
 }
 
 bool SpectralModeProcessor::process (SpectralMode mode,
@@ -1114,6 +1051,7 @@ bool SpectralModeProcessor::process (SpectralMode mode,
                                      int hopSamples) noexcept
 {
     lastMode_ = mode;
+    shadowComplexWrite_ = false;
 
     if (channelIndex == 0)
     {
@@ -1138,26 +1076,29 @@ bool SpectralModeProcessor::process (SpectralMode mode,
 
     if (! fading)
     {
-        applyModeMagnitudes (targetMode_, frame.magnitudes.data(), memoryMagnitudes, history,
-                             n, params, channelIndex, true);
+        const bool complexShadow = (targetMode_ == SpectralMode::Shadow);
+        applyModeMagnitudes (targetMode_, frame.magnitudes.data(), frame.phases.data(),
+                             memoryMagnitudes, history, n, params, channelIndex, true,
+                             complexShadow);
         return true;
     }
 
     if (static_cast<int> (crossfadeScratch_.size()) < n
         || static_cast<int> (identityScratch_.size()) < n)
     {
-        applyModeMagnitudes (targetMode_, frame.magnitudes.data(), memoryMagnitudes, history,
-                             n, params, channelIndex, true);
+        applyModeMagnitudes (targetMode_, frame.magnitudes.data(), frame.phases.data(),
+                             memoryMagnitudes, history, n, params, channelIndex, true, false);
         return true;
     }
 
     std::copy (frame.magnitudes.begin(), frame.magnitudes.begin() + n, identityScratch_.begin());
     std::copy (identityScratch_.begin(), identityScratch_.begin() + n, crossfadeScratch_.begin());
 
-    applyModeMagnitudes (previousMode_, crossfadeScratch_.data(), memoryMagnitudes, history,
-                         n, params, channelIndex, false);
-    applyModeMagnitudes (targetMode_, frame.magnitudes.data(), memoryMagnitudes, history,
-                         n, params, channelIndex, true);
+    // Mode crossfade blends magnitude results; Shadow uses shared-phase fold-in here.
+    applyModeMagnitudes (previousMode_, crossfadeScratch_.data(), frame.phases.data(),
+                         memoryMagnitudes, history, n, params, channelIndex, false, false);
+    applyModeMagnitudes (targetMode_, frame.magnitudes.data(), frame.phases.data(),
+                         memoryMagnitudes, history, n, params, channelIndex, true, false);
 
     const float a = modeCrossfade_;
     const float b = 1.0f - a;
@@ -1168,6 +1109,7 @@ bool SpectralModeProcessor::process (SpectralMode mode,
             + crossfadeScratch_[static_cast<std::size_t> (i)] * b;
     }
 
+    shadowComplexWrite_ = false;
     return true;
 }
 

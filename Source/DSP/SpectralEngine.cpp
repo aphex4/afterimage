@@ -1,20 +1,10 @@
 #include "SpectralEngine.h"
+#include "XorshiftRandom.h"
 
 #include <cmath>
 
 namespace afterimage
 {
-namespace
-{
-/** xorshift32 — RT-safe, no alloc, returns [0, 1). */
-inline float nextUnitRandom (std::uint32_t& state) noexcept
-{
-    state ^= state << 13;
-    state ^= state >> 17;
-    state ^= state << 5;
-    return static_cast<float> (state & 0x00FFFFFFu) * (1.0f / 16777216.0f);
-}
-} // namespace
 
 float computeRandomRecallAge (float& wanderOffset,
                               std::uint32_t& rng,
@@ -43,7 +33,6 @@ void SpectralEngine::prepare (double sampleRate, int maxBlockSize, int numChanne
     workingFrame_.prepare (constants::numBins);
     analysisForHistory_.prepare (constants::numBins);
     frameSmoothers_.prepareFrameSmoothers (sampleRate);
-    tapProfileScratch_.prepare (constants::numBins, sampleRate, stft_.getHopSize());
 
     histories_.clear();
     histories_.reserve (static_cast<std::size_t> (numChannels_));
@@ -69,8 +58,6 @@ void SpectralEngine::prepare (double sampleRate, int maxBlockSize, int numChanne
         previousMagnitudes_[static_cast<std::size_t> (c)].assign (
             static_cast<std::size_t> (constants::numBins), 0.0f);
     }
-
-    modes_.setTapProfileScratch (&tapProfileScratch_);
 
     stft_.setSpectrumCallback (&SpectralEngine::spectrumCallback, this);
     clearHistoryRequested_.store (false, std::memory_order_relaxed);
@@ -167,6 +154,7 @@ void SpectralEngine::clearHistoryOnAudioThread() noexcept
     freezeCrossfade_ = freezeTarget_ ? 1.0f : 0.0f;
 
     modes_.clearEraseMemory();
+    modes_.clearShadowTail();
     viz_.storeHistoryFill (0.0f);
 }
 
@@ -432,16 +420,16 @@ void SpectralEngine::onSpectrum (float* interleavedFftData, int fftSize, int cha
 
         if (wroteSpectrum)
         {
-            if (currentMode_ == SpectralMode::Shadow
-                && modes_.getShadowPhaseMode() == ShadowPhaseMode::PropagatedGhostPhase)
+            if (modes_.wantsShadowComplexWrite())
             {
-                writeInterleavedAdditiveGhost (interleavedFftData,
-                                               fftSize,
-                                               workingFrame_.magnitudes.data(),
-                                               workingFrame_.phases.data(),
-                                               modes_.getLastShadowTail(),
-                                               modes_.getGhostPhases (channelIndex),
-                                               numBins);
+                writeInterleavedWithTail (interleavedFftData,
+                                          fftSize,
+                                          workingFrame_.magnitudes.data(),
+                                          workingFrame_.phases.data(),
+                                          modes_.getShadowTailMagnitudes (channelIndex),
+                                          modes_.getShadowTailPhases (channelIndex),
+                                          modes_.getLastShadowTailGain(),
+                                          numBins);
             }
             else
             {

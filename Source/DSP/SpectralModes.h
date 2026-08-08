@@ -3,6 +3,7 @@
 #include "SpectralFrame.h"
 #include "SpectralHistoryBuffer.h"
 #include "SpectralMemoryProfile.h"
+#include "SpectralTail.h"
 #include "../Utilities/Constants.h"
 
 #include <vector>
@@ -25,13 +26,6 @@ enum class DebugAudition
     ShadowTailOnly,      // additive tail alone
     EraseRemovedOnly,    // material removed by Erase
     MergeDifferenceOnly  // |out - current|
-};
-
-/** Shadow ghost phase strategy (PropagatedGhostPhase OFF until listening proves better). */
-enum class ShadowPhaseMode
-{
-    CurrentPhase = 0,
-    PropagatedGhostPhase
 };
 
 struct ModeParams
@@ -83,9 +77,6 @@ inline constexpr float kMaxTransientReduction = 0.65f;
 /** Spectral-flux → transientStrength calibration. */
 inline constexpr float kTransientFluxCalibration = 3.2f;
 
-/** Default Shadow phase mode (experiment stays off until proven). */
-inline constexpr ShadowPhaseMode kDefaultShadowPhaseMode = ShadowPhaseMode::CurrentPhase;
-
 /** Nonlinear blur radius: round(blur² * maxRadius). blur=0 → 0. */
 [[nodiscard]] int blurRadiusFromAmount (float blur01,
                                         int maxRadius = constants::maxBlurRadiusBins) noexcept;
@@ -119,14 +110,15 @@ void writeInterleavedFromMagnitudePhase (float* interleavedFftData,
                                          const float* phases,
                                          int numBins) noexcept;
 
-/** Reconstruct interleaved FFT using current phase for dry + optional ghost phase for tail. */
-void writeInterleavedAdditiveGhost (float* interleavedFftData,
-                                    int fftSize,
-                                    const float* currentMagnitudes,
-                                    const float* currentPhases,
-                                    const float* ghostMagnitudes,
-                                    const float* ghostPhases,
-                                    int numBins) noexcept;
+/** Complex-add a tail with independent magnitudes AND phases onto a dry spectrum. */
+void writeInterleavedWithTail (float* interleavedFftData,
+                               int fftSize,
+                               const float* dryMagnitudes,
+                               const float* dryPhases,
+                               const float* tailMagnitudes,
+                               const float* tailPhases,
+                               float tailGain,
+                               int numBins) noexcept;
 
 [[nodiscard]] inline bool modeTransformsSpectrum (SpectralMode) noexcept
 {
@@ -136,7 +128,7 @@ void writeInterleavedAdditiveGhost (float* interleavedFftData,
 /**
     Shadow / Erase / Merge spectral transforms on stabilized memory profiles.
 
-    Shadow: multi-age additive spectral tail + diffusion.
+    Shadow: SpectralTail feedback accumulator + phase-vocoder ghost phase.
     Erase: relative-prominence familiarity map + mask blur.
     Merge: dual-profile log-envelope morph + fine structure.
 */
@@ -149,18 +141,11 @@ public:
     /** Clear Erase familiarity envelopes only (history clear / preset load). */
     void clearEraseMemory() noexcept;
 
+    /** Clear Shadow SpectralTail accumulator (history clear / preset load). */
+    void clearShadowTail() noexcept { spectralTail_.reset(); }
+
     /** Called when Freeze engages — freeze familiarity map (Shadow/Merge use engine profiles). */
     void onFreezeEngaged() noexcept;
-
-    /** Optional scratch profile for Shadow multi-age taps (engine-owned, no alloc). */
-    void setTapProfileScratch (SpectralMemoryProfile* scratch) noexcept { tapProfile_ = scratch; }
-
-    void setShadowPhaseMode (ShadowPhaseMode mode) noexcept { shadowPhaseMode_ = mode; }
-    [[nodiscard]] ShadowPhaseMode getShadowPhaseMode() const noexcept { return shadowPhaseMode_; }
-
-    /** Last Shadow tail (pre-mix) for PropagatedGhostPhase writeback / tests. */
-    [[nodiscard]] const float* getLastShadowTail() const noexcept { return shadowTailScratch_.data(); }
-    [[nodiscard]] const float* getGhostPhases (int channelIndex = 0) const noexcept;
 
     void setMode (SpectralMode mode) noexcept;
     void tickModeCrossfade (int hopSamples) noexcept;
@@ -174,10 +159,16 @@ public:
     [[nodiscard]] const float* getEraseFamiliarityEnvelope (int channelIndex = 0) const noexcept;
     [[nodiscard]] int getEraseFamiliarityNumBins() const noexcept { return numBins_; }
 
+    /** Last Shadow complex-write state (engine uses writeInterleavedWithTail). */
+    [[nodiscard]] bool wantsShadowComplexWrite() const noexcept { return shadowComplexWrite_; }
+    [[nodiscard]] float getLastShadowTailGain() const noexcept { return lastShadowTailGain_; }
+    [[nodiscard]] const float* getShadowTailMagnitudes (int channelIndex = 0) const noexcept;
+    [[nodiscard]] const float* getShadowTailPhases (int channelIndex = 0) const noexcept;
+
     /**
         Apply active spectral mode into `frame.magnitudes`.
         `memoryMagnitudes` = effective stabilized profile (Freeze-aware).
-        `history` optional — required for Shadow multi-age taps; may be null in unit tests.
+        `history` optional — used by Shadow for Recall injection.
     */
     bool process (SpectralMode mode,
                   SpectralFrame& frame,
@@ -206,18 +197,6 @@ public:
                                const ModeParams& params,
                                int channelIndex) noexcept;
 
-    /**
-        Build multi-age Shadow tail into dest (for tests).
-        Uses history when available; otherwise treats historyMagnitudes as single tap.
-    */
-    void buildShadowTail (float* dest,
-                          int numBins,
-                          const float* memoryMagnitudes,
-                          const SpectralHistoryBuffer* history,
-                          const ModeParams& params,
-                          int channelIndex,
-                          bool updateSmoothers) noexcept;
-
 private:
     void noteModeChange (SpectralMode mode) noexcept;
     void advanceModeCrossfade (int hopSamples) noexcept;
@@ -237,20 +216,24 @@ private:
 
     void applyModeMagnitudes (SpectralMode mode,
                               float* magnitudes,
+                              const float* phases,
                               const float* memoryMagnitudes,
                               const SpectralHistoryBuffer* history,
                               int numBins,
                               const ModeParams& params,
                               int channelIndex,
-                              bool updateSmoothers) noexcept;
+                              bool updateSmoothers,
+                              bool leaveDryForComplexWrite) noexcept;
 
     void applyShadowPath (float* magnitudes,
+                          const float* phases,
                           const float* memoryMagnitudes,
                           const SpectralHistoryBuffer* history,
                           int numBins,
                           const ModeParams& params,
                           int channelIndex,
-                          bool updateSmoothers) noexcept;
+                          bool updateSmoothers,
+                          bool leaveDryForComplexWrite) noexcept;
 
     void applyErasePath (float* magnitudes,
                          const float* memoryMagnitudes,
@@ -271,8 +254,6 @@ private:
                                  const ModeParams& params,
                                  int channelIndex) noexcept;
 
-    void advanceGhostPhases (int numBins, int channelIndex) noexcept;
-
     int numBins_ = 0;
     int numChannels_ = 2;
     double sampleRate_ = 44100.0;
@@ -282,14 +263,17 @@ private:
     SpectralMode lastMode_ = SpectralMode::Shadow;
     float modeCrossfade_ = 1.0f;
 
-    ShadowPhaseMode shadowPhaseMode_ = kDefaultShadowPhaseMode;
-    SpectralMemoryProfile* tapProfile_ = nullptr;
+    SpectralTail spectralTail_;
+    bool shadowComplexWrite_ = false;
+    float lastShadowTailGain_ = 0.0f;
+    float lastShadowDiffusion_ = 0.0f;
 
     std::vector<float> blurScratch_;
     std::vector<float> prefixScratch_;
     std::vector<float> identityScratch_;
     std::vector<float> crossfadeScratch_;
-    std::vector<float> shadowTailScratch_;
+    std::vector<float> shadowInjectScratch_;
+    std::vector<float> shadowPhaseScratch_;
     std::vector<float> diffuseScratchA_;
     std::vector<float> diffuseScratchB_;
     std::vector<float> limiterScratch_;
@@ -308,10 +292,9 @@ private:
     std::vector<float> ceilingScale_;
     std::vector<float> transientSmoothed_;
 
-    // Per-channel Erase familiarity + mask temporal smooth + ghost phase
+    // Per-channel Erase familiarity + mask temporal smooth
     std::vector<std::vector<float>> eraseFamiliarity_;
     std::vector<std::vector<float>> eraseMaskSmoothed_;
-    std::vector<std::vector<float>> ghostPhases_;
     std::vector<bool> eraseFamiliarityFrozen_;
 
     // Short current-profile EMA for Merge (40–100 ms)
