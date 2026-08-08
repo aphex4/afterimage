@@ -53,6 +53,7 @@ private:
     std::vector<std::vector<float>> prevInputPhase_;
     std::vector<std::vector<float>> decayCoeff_;
     std::vector<std::vector<float>> shimmerLfo_;
+    std::vector<std::vector<float>> tailOmega_; // held radians-per-hop
     std::vector<std::uint32_t> rng_;
     std::vector<float> cachedRt60_;
     std::vector<float> cachedHfDamp_;

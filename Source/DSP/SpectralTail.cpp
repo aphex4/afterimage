@@ -12,6 +12,7 @@ namespace
 constexpr float kParamEpsilon = 1.0e-4f;
 constexpr float kDenormalFlush = 1.0e-12f;
 constexpr float kLn1000 = 6.907755f; // ln(1000) for RT60 → per-hop decay
+constexpr float kOmegaSteerRate = 0.30f;
 
 [[nodiscard]] inline float clampf (float v, float lo, float hi) noexcept
 {
@@ -34,6 +35,7 @@ void SpectralTail::prepare (int numBins, double sampleRate, int hopSize, int num
     prevInputPhase_.assign (chN, std::vector<float> (binN, 0.0f));
     decayCoeff_.assign (chN, std::vector<float> (binN, 0.0f));
     shimmerLfo_.assign (chN, std::vector<float> (binN, 0.0f));
+    tailOmega_.assign (chN, std::vector<float> (binN, 0.0f));
     rng_.assign (chN, 0u);
     cachedRt60_.assign (chN, -1.0f);
     cachedHfDamp_.assign (chN, -1.0f);
@@ -59,6 +61,8 @@ void SpectralTail::reset() noexcept
     for (auto& v : prevInputPhase_)
         std::fill (v.begin(), v.end(), 0.0f);
     for (auto& v : shimmerLfo_)
+        std::fill (v.begin(), v.end(), 0.0f);
+    for (auto& v : tailOmega_)
         std::fill (v.begin(), v.end(), 0.0f);
     std::fill (cachedRt60_.begin(), cachedRt60_.end(), -1.0f);
     std::fill (cachedHfDamp_.begin(), cachedHfDamp_.end(), -1.0f);
@@ -102,6 +106,7 @@ void SpectralTail::processHop (int channelIndex,
     auto& gphase = ghostPhase_[ch];
     auto& prevPh = prevInputPhase_[ch];
     auto& shimmer = shimmerLfo_[ch];
+    auto& omegaHeld = tailOmega_[ch];
     auto& coeffs = decayCoeff_[ch];
     auto& rng = rng_[ch];
 
@@ -117,21 +122,34 @@ void SpectralTail::processHop (int channelIndex,
     const float hop = static_cast<float> (hopSize_);
     const bool hadPrev = hasPrevPhase_[ch];
 
+    float frameMax = 0.0f;
+    for (int k = 0; k < numBins_; ++k)
+        frameMax = std::max (frameMax, inputMagnitudes[k]);
+    const float frameThreshold = frameMax * 0.005f;
+
     for (int k = 0; k < numBins_; ++k)
     {
         const auto i = static_cast<std::size_t> (k);
         const float inMag = std::max (0.0f, inputMagnitudes[k]);
         const float inPh = inputPhases[k];
 
-        // (a) Instantaneous frequency via phase vocoder
+        // (a) Held omega: only steer from phase-vocoder when bin has real energy
         const float expected = twoPi * static_cast<float> (k) * hop / fft;
-        float omega = expected;
-        if (hadPrev)
+        const bool significant = hadPrev && (inMag > frameThreshold);
+
+        if (significant)
         {
-            float dphi = inPh - prevPh[i] - expected;
-            dphi = princarg (dphi);
-            omega = expected + dphi;
+            const float dphi = princarg (inPh - prevPh[i] - expected);
+            const float measured = expected + dphi;
+            const float steer = clampf (params.injectGain * kOmegaSteerRate, 0.0f, 1.0f);
+            omegaHeld[i] += steer * princarg (measured - omegaHeld[i]);
         }
+        else if (omegaHeld[i] == 0.0f)
+        {
+            omegaHeld[i] = expected;
+        }
+
+        const float omega = omegaHeld[i];
         prevPh[i] = inPh;
 
         // (b)/(c) Frequency-dependent decay + accumulate
