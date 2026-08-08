@@ -1,5 +1,6 @@
 #include "DSP/SpectralModes.h"
 #include "DSP/SpectralEngine.h"
+#include "DSP/SpectralTail.h"
 #include "DSP/LogSmoother.h"
 #include "SpectralFixtures.h"
 #include "Utilities/Constants.h"
@@ -818,6 +819,367 @@ void testPhase9EraseMergeAcceptance()
     }
 }
 
+//==============================================================================
+// Round 2 — Shadow wash + Merge audibility
+//==============================================================================
+void testRound2ShadowNoIsolatedPartials()
+{
+    std::cout << "Round 2 Shadow: no isolated ringing partials...\n";
+    constexpr double sr = 48000.0;
+    constexpr int burstSamples = (int) (0.10 * sr);
+    // Process through burst + 1.5 s of silence so the probed tail is mid-decay.
+    constexpr int totalSamples = burstSamples + (int) (1.5 * sr) + 8192;
+
+    SpectralEngine engine;
+    engine.prepare (sr, 512, 1);
+    engine.setMode (SpectralMode::Shadow);
+    engine.setActiveMemoryLengthSeconds (4.0f);
+    engine.setSpectralParameterTargets (1.0f, 0.0f, 0.20f, 0.35f, 0.0f, 0.0f, false);
+    engine.snapSpectralSmoothersToTargets();
+
+    juce::AudioBuffer<float> buf (1, totalSamples);
+    buf.clear();
+    {
+        juce::AudioBuffer<float> burst (1, burstSamples);
+        std::uint32_t rng = 0xBEEF01u;
+        fillPink (burst, rng);
+        burst.applyGain (2.5f);
+        buf.copyFrom (0, 0, burst, 0, 0, burstSamples);
+    }
+
+    for (int offset = 0; offset < totalSamples; )
+    {
+        const int n = std::min (512, totalSamples - offset);
+        float* ptrs[1] = { buf.getWritePointer (0) + offset };
+        juce::AudioBuffer<float> view (ptrs, 1, n);
+        engine.process (view);
+        offset += n;
+    }
+
+    const float* tail = engine.getModeProcessor().getShadowTailMagnitudes (0);
+    CHECK (tail != nullptr);
+    if (tail != nullptr)
+    {
+        const float contrast = maxNeighborBinContrast (tail, constants::numBins);
+        std::cout << "  maxNeighborBinContrast=" << contrast << "\n";
+        CHECK (contrast < 6.0f);
+    }
+}
+
+void testRound2ShadowCentroidStability()
+{
+    std::cout << "Round 2 Shadow: stable tail pitch (centroid)...\n";
+    // Measure SpectralTail magnitude centroid hop-to-hop (not wet audio), so A2
+    // darkening and dry/wet mix do not masquerade as A3 omega jitter.
+    constexpr double sr = 48000.0;
+    const float binHz = (float) sr / (float) constants::fftSize;
+    const int toneBin = std::max (1, (int) std::lround (440.0 / binHz));
+
+    SpectralTail tail;
+    tail.prepare (constants::numBins, sr, constants::hopSize, 1);
+    SpectralTailParams tp;
+    tp.rt60Seconds = 4.0f;
+    tp.hfDampRatio = 0.25f;
+    tp.injectGain = 1.0f;
+    tp.diffusion = 0.0f;
+    tp.shimmerCents = 0.0f;
+    tp.spectralDiffusion = 0.15f;
+    tp.diffusionOctaves = 0.15f;
+
+    std::vector<float> mags ((size_t) constants::numBins, 0.0f);
+    std::vector<float> phases ((size_t) constants::numBins, 0.0f);
+    mags[(size_t) toneBin] = 2.0f;
+
+    const int burstHops = (int) std::lround (0.10 * sr / constants::hopSize);
+    const int startHop = burstHops + (int) std::lround (0.5 * sr / constants::hopSize);
+    const int endHop = burstHops + (int) std::lround (2.0 * sr / constants::hopSize);
+    // Aggregate ~50 ms windows (~5 hops at 48 kHz / 512).
+    const int winHops = std::max (1, (int) std::lround (0.05 * sr / constants::hopSize));
+
+    auto centroidHz = [&] (const float* m) -> float
+    {
+        double num = 0.0, den = 0.0;
+        for (int k = 1; k < constants::numBins; ++k)
+        {
+            const double v = (double) m[k];
+            num += v * (double) k * (double) binHz;
+            den += v;
+        }
+        return den > 1.0e-12 ? (float) (num / den) : 0.0f;
+    };
+
+    float prevWin = 0.0f;
+    float maxRel = 0.0f;
+    double winSum = 0.0;
+    int winCount = 0;
+    int wins = 0;
+
+    for (int h = 0; h < endHop; ++h)
+    {
+        if (h >= burstHops)
+            std::fill (mags.begin(), mags.end(), 0.0f);
+        else
+        {
+            std::fill (mags.begin(), mags.end(), 0.0f);
+            mags[(size_t) toneBin] = 2.0f;
+            // Coherent phase advance at the tone's expected omega.
+            phases[(size_t) toneBin] += 2.0f * juce::MathConstants<float>::pi
+                                        * (float) toneBin * (float) constants::hopSize
+                                        / (float) constants::fftSize;
+        }
+
+        tail.processHop (0, mags.data(), phases.data(), tp);
+
+        if (h < startHop)
+            continue;
+
+        winSum += (double) centroidHz (tail.getTailMagnitudes (0));
+        ++winCount;
+        if (winCount >= winHops)
+        {
+            const float c = (float) (winSum / (double) winCount);
+            if (wins > 0 && prevWin > 1.0f && c > 1.0f)
+                maxRel = std::max (maxRel, std::abs (c - prevWin) / prevWin);
+            prevWin = c;
+            winSum = 0.0;
+            winCount = 0;
+            ++wins;
+        }
+    }
+
+    std::cout << "  max 50ms-window centroid rel change=" << maxRel
+              << " windows=" << wins << "\n";
+    CHECK (wins >= 4);
+    CHECK (maxRel <= 0.08f);
+}
+
+void testRound2ShadowBandDecayRatio()
+{
+    std::cout << "Round 2 Shadow: mid-treble damps faster than low-mids...\n";
+    constexpr double sr = 48000.0;
+    const float binHz = (float) sr / (float) constants::fftSize;
+    const int loA = std::max (1, (int) std::lround (200.0 / binHz));
+    const int hiA = std::min (constants::numBins - 1, (int) std::lround (600.0 / binHz));
+    const int loB = std::max (1, (int) std::lround (2000.0 / binHz));
+    const int hiB = std::min (constants::numBins - 1, (int) std::lround (6000.0 / binHz));
+
+    auto bandPow = [&] (const float* m, int lo, int hi) -> double
+    {
+        double e = 0.0;
+        for (int k = lo; k <= hi; ++k)
+            e += (double) m[k] * (double) m[k];
+        return e;
+    };
+
+    SpectralTail tail;
+    tail.prepare (constants::numBins, sr, constants::hopSize, 1);
+    SpectralTailParams tp;
+    tp.rt60Seconds = 3.0f;
+    tp.hfDampRatio = 0.20f;
+    tp.injectGain = 1.0f;
+    tp.diffusion = 0.0f;
+    tp.shimmerCents = 0.0f;
+    tp.spectralDiffusion = 0.15f;
+    tp.diffusionOctaves = 0.15f;
+    tp.freeze = false;
+
+    std::vector<float> mags ((size_t) constants::numBins, 0.5f);
+    std::vector<float> phases ((size_t) constants::numBins, 0.0f);
+    const int injectHops = (int) std::lround (0.15 * sr / constants::hopSize);
+    for (int h = 0; h < injectHops; ++h)
+    {
+        for (int k = 0; k < constants::numBins; ++k)
+            phases[(size_t) k] = (float) k * 0.01f * (float) h;
+        tail.processHop (0, mags.data(), phases.data(), tp);
+    }
+
+    std::fill (mags.begin(), mags.end(), 0.0f);
+    const int decayHops = (int) std::lround (0.8 * sr / constants::hopSize);
+    const float* t0 = nullptr;
+    double eA0 = 0, eB0 = 0, eA1 = 0, eB1 = 0;
+    for (int h = 0; h < decayHops; ++h)
+    {
+        tail.processHop (0, mags.data(), phases.data(), tp);
+        if (h == 0)
+        {
+            t0 = tail.getTailMagnitudes (0);
+            eA0 = bandPow (t0, loA, hiA);
+            eB0 = bandPow (t0, loB, hiB);
+        }
+    }
+    const float* t1 = tail.getTailMagnitudes (0);
+    eA1 = bandPow (t1, loA, hiA);
+    eB1 = bandPow (t1, loB, hiB);
+
+    const double decayA = (eA0 > 1e-20) ? (eA1 / eA0) : 1.0;
+    const double decayB = (eB0 > 1e-20) ? (eB1 / eB0) : 1.0;
+    // Smaller remaining fraction ⇒ faster decay. Mid-treble should retain ≤ half of low-mids.
+    std::cout << "  remaining frac low=" << decayA << " midHF=" << decayB << "\n";
+    CHECK (eA0 > 1e-8 && eB0 > 1e-8);
+    CHECK (decayB <= decayA * 0.5);
+}
+
+void testRound2ShadowBurstRt60Independent()
+{
+    std::cout << "Round 2 Shadow: burst level RT60-independent...\n";
+    constexpr double sr = 48000.0;
+    const int burstHops = (int) std::lround (0.20 * sr / constants::hopSize);
+    const int measureHops = (int) std::lround (0.30 * sr / constants::hopSize);
+
+    auto peakAfterBurst = [&] (float rt60) -> float
+    {
+        SpectralTail tail;
+        tail.prepare (constants::numBins, sr, constants::hopSize, 1);
+        SpectralTailParams tp;
+        tp.rt60Seconds = rt60;
+        tp.hfDampRatio = 0.22f;
+        tp.injectGain = 1.0f;
+        tp.spectralDiffusion = 0.15f;
+        tp.diffusionOctaves = 0.15f;
+
+        std::vector<float> mags ((size_t) constants::numBins, 0.8f);
+        std::vector<float> phases ((size_t) constants::numBins, 0.0f);
+        float peak = 0.0f;
+        for (int h = 0; h < burstHops + measureHops; ++h)
+        {
+            if (h >= burstHops)
+                std::fill (mags.begin(), mags.end(), 0.0f);
+            for (int k = 0; k < constants::numBins; ++k)
+                phases[(size_t) k] = 0.02f * (float) k * (float) (h + 1);
+            tail.processHop (0, mags.data(), phases.data(), tp);
+            if (h >= burstHops)
+            {
+                const float* tm = tail.getTailMagnitudes (0);
+                for (int k = 1; k < constants::numBins; ++k)
+                    peak = std::max (peak, tm[k]);
+            }
+        }
+        return peak;
+    };
+
+    const float p1 = peakAfterBurst (1.0f);
+    const float p20 = peakAfterBurst (20.0f);
+    const float diffDb = std::abs (constants::gainToDb ((p1 + 1e-12f) / (p20 + 1e-12f)));
+    std::cout << "  peak@1s=" << p1 << " peak@20s=" << p20 << " |diff|dB=" << diffDb << "\n";
+    CHECK (p1 > 1e-6f && p20 > 1e-6f);
+    CHECK (diffDb < 6.0f);
+}
+
+void testRound2MergeNotIdentity()
+{
+    std::cout << "Round 2 Merge: not an identity transform...\n";
+    SpectralModeProcessor modes;
+    modes.prepare (constants::numBins, 48000.0, 1);
+    modes.reset();
+
+    std::vector<float> white ((size_t) constants::numBins, 0.4f);
+    std::vector<float> narrow ((size_t) constants::numBins, 0.02f);
+    narrow[80] = 3.0f;
+    narrow[81] = 2.5f;
+    narrow[82] = 2.0f;
+
+    auto cur = white;
+    auto original = white;
+    ModeParams p = makeParams (1.0f, 0.25f, 0.0f, 0.45f, 3.0f);
+    for (int i = 0; i < 12; ++i)
+    {
+        cur = white;
+        modes.applyMergeMagnitudes (cur.data(), narrow.data(), constants::numBins, p, 0);
+    }
+
+    double err = 0.0;
+    int count = 0;
+    for (int k = 2; k < constants::numBins - 2; ++k)
+    {
+        const float da = constants::gainToDb (cur[(size_t) k] + 1e-8f);
+        const float db = constants::gainToDb (original[(size_t) k] + 1e-8f);
+        const float d = da - db;
+        err += (double) d * (double) d;
+        ++count;
+    }
+    const float rmsDb = (float) std::sqrt (err / std::max (1, count));
+    std::cout << "  log-spectrum RMS diff vs input=" << rmsDb << " dB\n";
+    CHECK (rmsDb >= 6.0f);
+}
+
+void testRound2MergeFullMorph()
+{
+    std::cout << "Round 2 Merge: full morph reaches smeared memory...\n";
+    SpectralModeProcessor modes;
+    modes.prepare (constants::numBins, 48000.0, 1);
+    modes.reset();
+
+    std::vector<float> carrier, memory;
+    fixtures::fillPinkTilt (carrier, 0.5f);
+    fixtures::fillFormant (memory, 50.0f, 130.0f, 1.5f);
+    ModeParams p = makeParams (1.0f, 0.2f, 0.0f);
+
+    auto cur = carrier;
+    for (int i = 0; i < 16; ++i)
+    {
+        cur = carrier;
+        modes.applyMergeMagnitudes (cur.data(), memory.data(), constants::numBins, p, 0);
+    }
+
+    LogSmoother log;
+    log.prepare (constants::numBins, 48000.0, constants::fftSize);
+    log.setWidth (0.5f); // blur=0 → Merge base constant-Q width
+    std::vector<float> envMem ((size_t) constants::numBins);
+    std::vector<float> prefix ((size_t) constants::numBins + 1);
+    log.process (memory.data(), envMem.data(), constants::numBins, prefix.data());
+
+    double eOut = 0.0, eMem = 0.0;
+    for (int k = 2; k < constants::numBins - 2; ++k)
+    {
+        eOut += (double) cur[(size_t) k] * cur[(size_t) k];
+        eMem += (double) envMem[(size_t) k] * envMem[(size_t) k];
+    }
+    const float scale = (eOut > 1e-20 && eMem > 1e-20)
+                            ? (float) std::sqrt (eMem / eOut) : 1.0f;
+    double err = 0.0;
+    int count = 0;
+    for (int k = 2; k < constants::numBins - 2; ++k)
+    {
+        const float g = (cur[(size_t) k] * scale + 1e-8f) / (envMem[(size_t) k] + 1e-8f);
+        const float db = constants::gainToDb (g);
+        err += (double) db * (double) db;
+        ++count;
+    }
+    const float rmsDb = (float) std::sqrt (err / std::max (1, count));
+    std::cout << "  full-morph vs CQ(memory) RMS err dB=" << rmsDb << "\n";
+    CHECK (rmsDb <= 3.0f);
+}
+
+void testRound2MergeMonotonic()
+{
+    std::cout << "Round 2 Merge: partial morph monotonic vs Influence...\n";
+    SpectralModeProcessor modes;
+    modes.prepare (constants::numBins, 48000.0, 1);
+
+    std::vector<float> carrier, memory;
+    fixtures::fillPinkTilt (carrier, 0.6f);
+    fixtures::fillFormant (memory, 45.0f, 140.0f, 1.2f);
+
+    float prev = -1.0f;
+    for (int step = 0; step <= 10; ++step)
+    {
+        const float infl = (float) step / 10.0f;
+        modes.reset();
+        auto cur = carrier;
+        ModeParams p = makeParams (infl, 0.25f, 0.15f, 0.45f, 3.0f);
+        for (int i = 0; i < 8; ++i)
+        {
+            cur = carrier;
+            modes.applyMergeMagnitudes (cur.data(), memory.data(), constants::numBins, p, 0);
+        }
+        const float dist = (float) fixtures::logSpectralDistance (cur.data(), carrier.data(),
+                                                                  constants::numBins);
+        std::cout << "  Infl=" << infl << " logDist=" << dist << "\n";
+        CHECK (dist + 1e-4f >= prev);
+        prev = dist;
+    }
+}
+
 void runEffectStrengthTests()
 {
     testMapInfluenceEndpointsAndMid();
@@ -833,4 +1195,11 @@ void runEffectStrengthTests()
     testBaselineDiagnosisPrint();
     testPhase9ShadowTailAcceptance();
     testPhase9EraseMergeAcceptance();
+    testRound2ShadowNoIsolatedPartials();
+    testRound2ShadowCentroidStability();
+    testRound2ShadowBandDecayRatio();
+    testRound2ShadowBurstRt60Independent();
+    testRound2MergeNotIdentity();
+    testRound2MergeFullMorph();
+    testRound2MergeMonotonic();
 }
