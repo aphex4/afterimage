@@ -139,7 +139,7 @@ void writeInterleavedWithTail (float* interleavedFftData,
 
     Shadow: SpectralTail feedback accumulator + phase-vocoder ghost phase.
     Erase: relative-prominence familiarity map + mask blur.
-    Merge: dual-profile log-envelope morph + fine structure.
+    Merge: full-spectrum log-domain morph against temporally smeared memory.
 */
 class SpectralModeProcessor
 {
@@ -297,10 +297,11 @@ private:
     std::vector<float> eraseMaskScratch_;
     std::vector<float> eraseMaskSmoothScratch_;
     std::vector<float> broadEnvScratch_;
-    std::vector<float> mergeCurEnvScratch_;
-    std::vector<float> mergeHistEnvScratch_;
-    std::vector<float> mergeCurProfileScratch_;
+    std::vector<float> mergeCurEnvScratch_;       // dead after B1 — removed in B5
+    std::vector<float> mergeHistEnvScratch_;      // CQ-smoothed smeared memory
+    std::vector<float> mergeCurProfileScratch_;   // dead after B1 — removed in B5
     std::vector<float> mergeOutScratch_;
+    std::vector<float> memorySmearedScratch_;     // EMA output before CQ smooth
 
     std::vector<float> energyScaleSmoothed_; // diagnostic alias of ceilingScale_
     std::vector<float> runningPeak_;
@@ -320,8 +321,12 @@ private:
     // Legacy accessor backing (exposes famPow as "familiarity" envelope for viz/tests)
     std::vector<std::vector<float>> eraseFamiliarity_;
 
-    // Short current-profile EMA for Merge (40–100 ms)
+    // Short current-profile EMA for Merge (40–100 ms) — removed after B5
     std::vector<std::vector<float>> mergeCurrentProfile_;
+
+    // Temporally smeared memory spectrum for Merge (Memory Length × 0.35)
+    std::vector<std::vector<float>> mergeMemorySmeared_;
+    std::vector<bool> mergeMemoryPrimed_;
 };
 
 [[nodiscard]] inline const char* spectralModeName (SpectralMode mode) noexcept

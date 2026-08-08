@@ -308,6 +308,7 @@ void SpectralModeProcessor::prepare (int numBins, double sampleRate, int numChan
     mergeHistEnvScratch_.assign (static_cast<std::size_t> (numBins_), 0.0f);
     mergeCurProfileScratch_.assign (static_cast<std::size_t> (numBins_), 0.0f);
     mergeOutScratch_.assign (static_cast<std::size_t> (numBins_), 0.0f);
+    memorySmearedScratch_.assign (static_cast<std::size_t> (numBins_), 0.0f);
 
     energyScaleSmoothed_.assign (static_cast<std::size_t> (numChannels_), 1.0f);
     runningPeak_.assign (static_cast<std::size_t> (numChannels_), 0.0f);
@@ -342,6 +343,9 @@ void SpectralModeProcessor::prepare (int numBins, double sampleRate, int numChan
 
     mergeCurrentProfile_.assign (static_cast<std::size_t> (numChannels_),
                                  std::vector<float> (static_cast<std::size_t> (numBins_), 0.0f));
+    mergeMemorySmeared_.assign (static_cast<std::size_t> (numChannels_),
+                                std::vector<float> (static_cast<std::size_t> (numBins_), 0.0f));
+    mergeMemoryPrimed_.assign (static_cast<std::size_t> (numChannels_), false);
 
     spectralTail_.prepare (numBins_, sampleRate_, constants::hopSize, numChannels_);
     logSmoother_.prepare (numBins_, sampleRate_, constants::fftSize);
@@ -377,13 +381,17 @@ void SpectralModeProcessor::reset()
     std::fill (mergeHistEnvScratch_.begin(), mergeHistEnvScratch_.end(), 0.0f);
     std::fill (mergeCurProfileScratch_.begin(), mergeCurProfileScratch_.end(), 0.0f);
     std::fill (mergeOutScratch_.begin(), mergeOutScratch_.end(), 0.0f);
+    std::fill (memorySmearedScratch_.begin(), memorySmearedScratch_.end(), 0.0f);
     std::fill (energyScaleSmoothed_.begin(), energyScaleSmoothed_.end(), 1.0f);
     std::fill (runningPeak_.begin(), runningPeak_.end(), 0.0f);
     std::fill (ceilingScale_.begin(), ceilingScale_.end(), 1.0f);
     std::fill (transientSmoothed_.begin(), transientSmoothed_.end(), 0.0f);
     std::fill (eraseFamiliarityFrozen_.begin(), eraseFamiliarityFrozen_.end(), false);
+    std::fill (mergeMemoryPrimed_.begin(), mergeMemoryPrimed_.end(), false);
 
     for (auto& m : mergeCurrentProfile_)
+        std::fill (m.begin(), m.end(), 0.0f);
+    for (auto& m : mergeMemorySmeared_)
         std::fill (m.begin(), m.end(), 0.0f);
 
     spectralTail_.reset();
@@ -924,55 +932,49 @@ void SpectralModeProcessor::applyMergePath (float* magnitudes,
     if (mixAmount <= kInfluenceEpsilon)
         return;
 
-    // Short current-profile EMA (~70 ms)
-    auto& curProf = mergeCurrentProfile_[ch];
     const float hopSec = static_cast<float> (constants::hopSize)
                          / static_cast<float> (std::max (1.0, sampleRate_));
-    const float profileMs = juce::jlimit (40.0f, 100.0f, kMergeCurrentProfileMs + blur * 30.0f);
-    const float coeff = 1.0f - std::exp (-hopSec / (profileMs * 0.001f));
+    const float smearMs = juce::jlimit (150.0f, 3000.0f,
+                                        params.memoryLengthSeconds * 1000.0f * 0.35f);
+    const float smearCoeff = 1.0f - std::exp (-hopSec / (smearMs * 0.001f));
 
-    if (updateSmoothers && static_cast<int> (curProf.size()) >= numBins)
+    // B2: temporally smeared memory EMA (seed on cold start), then constant-Q by Blur.
+    auto& smeared = mergeMemorySmeared_[ch];
+    if (updateSmoothers && static_cast<int> (smeared.size()) >= numBins)
     {
-        bool cold = true;
+        const bool cold = (ch >= mergeMemoryPrimed_.size()) || ! mergeMemoryPrimed_[ch];
         for (int i = 0; i < numBins; ++i)
         {
-            if (curProf[static_cast<std::size_t> (i)] > 1.0e-8f)
-            {
-                cold = false;
-                break;
-            }
-        }
-
-        for (int i = 0; i < numBins; ++i)
-        {
-            float& p = curProf[static_cast<std::size_t> (i)];
+            float& m = smeared[static_cast<std::size_t> (i)];
             if (cold)
-                p = magnitudes[i];
+                m = memoryMagnitudes[i];
             else
-                p += coeff * (magnitudes[i] - p);
-            mergeCurProfileScratch_[static_cast<std::size_t> (i)] = p;
+                m += smearCoeff * (memoryMagnitudes[i] - m);
+            memorySmearedScratch_[static_cast<std::size_t> (i)] = m;
         }
+        if (ch < mergeMemoryPrimed_.size())
+            mergeMemoryPrimed_[ch] = true;
+    }
+    else if (static_cast<int> (smeared.size()) >= numBins)
+    {
+        std::copy (smeared.begin(), smeared.begin() + numBins, memorySmearedScratch_.begin());
     }
     else
     {
-        std::copy (magnitudes, magnitudes + numBins, mergeCurProfileScratch_.begin());
+        std::copy (memoryMagnitudes, memoryMagnitudes + numBins, memorySmearedScratch_.begin());
     }
 
-    // Envelope width: Blur maps 1/2 → 2 octaves constant-Q
     const float envOctaves = kMergeEnvBaseOctaves
                              + blur * (kMergeEnvMaxOctaves - kMergeEnvBaseOctaves);
-
     logSmoother_.setWidth (envOctaves);
-    logSmoother_.process (mergeCurProfileScratch_.data(), mergeCurEnvScratch_.data(),
-                          numBins, prefixScratch_.data());
-    logSmoother_.process (memoryMagnitudes, mergeHistEnvScratch_.data(),
+    logSmoother_.process (memorySmearedScratch_.data(), mergeHistEnvScratch_.data(),
                           numBins, prefixScratch_.data());
 
 #if defined (AFTERIMAGE_DEBUG_AUDITION)
     if (kDebugAudition == DebugAudition::MemoryOnly)
     {
         for (int i = 0; i < numBins; ++i)
-            magnitudes[i] = memoryMagnitudes[i];
+            magnitudes[i] = mergeHistEnvScratch_[static_cast<std::size_t> (i)];
         sanitizeMagnitudes (magnitudes, numBins);
         return;
     }
@@ -980,12 +982,9 @@ void SpectralModeProcessor::applyMergePath (float* magnitudes,
     juce::ignoreUnused (kDebugAudition);
 #endif
 
-    // Morph depth is Influence (via mixAmount); Blur only widens envelopes / fineDamp.
+    // B1: full-spectrum log-domain morph (not envelope-only).
     const float morphAmount = juce::jlimit (0.0f, 1.0f, mixAmount);
-
-    // Instantaneous constant-Q envelope for fine structure (avoids EMA mismatch).
-    logSmoother_.setWidth (envOctaves);
-    logSmoother_.process (magnitudes, diffuseScratchA_.data(), numBins, prefixScratch_.data());
+    constexpr float kOutDbFloor = -120.0f;
 
     double energyIn = 0.0;
     double energyOut = 0.0;
@@ -993,19 +992,13 @@ void SpectralModeProcessor::applyMergePath (float* magnitudes,
     for (int i = 0; i < numBins; ++i)
     {
         const float cur = magnitudes[i];
-        const float curEnv = diffuseScratchA_[static_cast<std::size_t> (i)] + kMergeDbEpsilon;
-        const float histEnv = mergeHistEnvScratch_[static_cast<std::size_t> (i)] + kMergeDbEpsilon;
+        const float mem = mergeHistEnvScratch_[static_cast<std::size_t> (i)];
 
-        const float curDb = constants::gainToDb (curEnv);
-        const float histDb = constants::gainToDb (histEnv);
-        const float mergedDb = curDb + (histDb - curDb) * morphAmount;
-        const float mergedEnv = constants::dbToGain (mergedDb);
+        const float curDb = constants::gainToDb (cur + kMergeDbEpsilon);
+        const float memDb = constants::gainToDb (mem + kMergeDbEpsilon);
+        const float outDb = std::max (kOutDbFloor, curDb + (memDb - curDb) * morphAmount);
 
-        float fine = cur / curEnv;
-        const float fineDamp = 1.0f - 0.55f * blur * morphAmount;
-        fine = 1.0f + (fine - 1.0f) * fineDamp;
-
-        float out = fine * mergedEnv;
+        float out = constants::dbToGain (outDb);
 
 #if defined (AFTERIMAGE_DEBUG_AUDITION)
         if (kDebugAudition == DebugAudition::MergeDifferenceOnly)
@@ -1028,7 +1021,6 @@ void SpectralModeProcessor::applyMergePath (float* magnitudes,
             soft = constants::dbToGain (kMergeMaxResidualDb) / outOverIn;
         else if (residualDb < -kMergeMaxResidualDb)
             soft = constants::dbToGain (-kMergeMaxResidualDb) / outOverIn;
-        // Mild optional pull only when inside the cap.
         else
             soft = 1.0f + ((1.0f / outOverIn) - 1.0f) * kMergeSoftMatchAmount;
 
