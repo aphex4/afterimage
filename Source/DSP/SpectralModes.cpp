@@ -694,7 +694,8 @@ void SpectralModeProcessor::applyShadowPath (float* magnitudes,
         tp.injectGain = inject;
     }
     tp.diffusion = blur;
-    tp.shimmerCents = blur * 12.0f;
+    // Per-bin independent shimmer adds inharmonic metallic drift; keep off after A1–A5.
+    tp.shimmerCents = 0.0f;
     // Always some spectral spread — even Blur 0 is a wash, not a bell bank.
     tp.spectralDiffusion = 0.15f + blur * 0.45f;
     tp.diffusionOctaves  = 0.15f + blur * 0.60f;
