@@ -20,7 +20,7 @@ const AfterimageAudioProcessorEditor::DockItem* dockItems()
           afterimage::tooltips::influenceShadow,
           AfterimageAudioProcessorEditor::DockGroup::Spectral },
         { "BLUR", afterimage::constants::idBlur,
-          afterimage::tooltips::blur,
+          afterimage::tooltips::blurShadow,
           AfterimageAudioProcessorEditor::DockGroup::Spectral },
         { "TRANSIENT", afterimage::constants::idTransientPreserve,
           afterimage::tooltips::transientPreserve,
@@ -39,6 +39,7 @@ const AfterimageAudioProcessorEditor::DockItem* dockItems()
 }
 
 constexpr int kInfluenceKnobIndex = 2;
+constexpr int kBlurKnobIndex = 3;
 constexpr int kDockCount = 8;
 } // namespace
 
@@ -104,18 +105,18 @@ AfterimageAudioProcessorEditor::AfterimageAudioProcessorEditor (AfterimageAudioP
                 if (index == 2) mode = afterimage::SpectralMode::Merge;
                 modeSelector.setMode (mode);
                 memoryWell.setMode (mode);
-                updateInfluenceTooltip (mode);
+                updateModeDynamicTooltips (mode);
             },
             nullptr);
 
         modeParamAttachment->sendInitialUpdate();
-        updateInfluenceTooltip (modeSelector.getMode());
+        updateModeDynamicTooltips (modeSelector.getMode());
 
         modeSelector.onModeChanged = [this] (afterimage::SpectralMode mode)
         {
             modeParamAttachment->setValueAsCompleteGesture (static_cast<float> (static_cast<int> (mode)));
             memoryWell.setMode (mode);
-            updateInfluenceTooltip (mode);
+            updateModeDynamicTooltips (mode);
         };
     }
 
@@ -135,8 +136,25 @@ void AfterimageAudioProcessorEditor::buildPresetMenu()
 {
     presetBox.setTextWhenNothingSelected ("Custom");
     presetBox.setTooltip (afterimage::tooltips::preset);
+
+    int lastMode = -1;
     for (int i = 0; i < afterimage::factory::kNumPresets; ++i)
-        presetBox.addItem (afterimage::factory::kPresets[static_cast<std::size_t> (i)].name, i + 1);
+    {
+        const auto& pr = afterimage::factory::kPresets[static_cast<std::size_t> (i)];
+        if (pr.mode != lastMode)
+        {
+            if (lastMode >= 0)
+                presetBox.addSeparator();
+
+            const char* heading = "Shadow";
+            if (pr.mode == 1) heading = "Erase";
+            if (pr.mode == 2) heading = "Merge";
+            presetBox.addSectionHeading (heading);
+            lastMode = pr.mode;
+        }
+
+        presetBox.addItem (pr.name, i + 1);
+    }
 
     presetBox.setSelectedId (audioProcessor.getCurrentProgram() + 1, juce::dontSendNotification);
     presetBox.onChange = [this]
@@ -195,14 +213,15 @@ void AfterimageAudioProcessorEditor::buildDock()
         knobs.push_back (std::move (knob));
     }
 
-    updateInfluenceTooltip (modeSelector.getMode());
+    updateModeDynamicTooltips (modeSelector.getMode());
 }
 
-void AfterimageAudioProcessorEditor::updateInfluenceTooltip (afterimage::SpectralMode mode)
+void AfterimageAudioProcessorEditor::updateModeDynamicTooltips (afterimage::SpectralMode mode)
 {
-    if (knobs.size() <= (size_t) kInfluenceKnobIndex)
-        return;
-    knobs[(size_t) kInfluenceKnobIndex]->setTooltip (afterimage::tooltips::influenceForMode (mode));
+    if (knobs.size() > (size_t) kInfluenceKnobIndex)
+        knobs[(size_t) kInfluenceKnobIndex]->setTooltip (afterimage::tooltips::influenceForMode (mode));
+    if (knobs.size() > (size_t) kBlurKnobIndex)
+        knobs[(size_t) kBlurKnobIndex]->setTooltip (afterimage::tooltips::blurForMode (mode));
 }
 
 void AfterimageAudioProcessorEditor::paint (juce::Graphics& g)

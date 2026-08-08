@@ -37,6 +37,10 @@ constexpr int   kEraseBroadEnvRadius = 14;
 constexpr float kMergeDbEpsilon = 1.0e-8f;
 constexpr float kMergeCurrentProfileMs = 70.0f;
 constexpr int   kMergeEnvBaseRadius = 12;
+// Soft energy match: almost full unity pull, tiny musical residual (±1.25 dB).
+// Prior ±2.5 dB @ 80% left mid-Influence morphs amplifying ~4–6 dB before GM.
+constexpr float kMergeSoftMatchAmount = 0.94f;
+constexpr float kMergeMaxResidualDb = 1.25f;
 
 #if defined (AFTERIMAGE_DEBUG_AUDITION)
 constexpr DebugAudition kDebugAudition = static_cast<DebugAudition> (AFTERIMAGE_DEBUG_AUDITION);
@@ -568,10 +572,16 @@ void SpectralModeProcessor::applyEnergyPolicy (SpectralMode mode,
 
             case SpectralMode::Merge:
             {
-                const float raw = 1.0f / outOverIn;
-                const float db = juce::jlimit (-2.5f, 2.5f,
-                                               constants::gainToDb (std::max (raw, 1.0e-8f)));
-                targetScale = constants::dbToGain (db * 0.80f);
+                // Soft-match toward input energy, then hard-cap residual loudness.
+                const float matchScale = 1.0f / outOverIn;
+                float soft = 1.0f + (matchScale - 1.0f) * kMergeSoftMatchAmount;
+                const float residualLin = std::max (1.0e-8f, outOverIn * soft);
+                const float residualDb = constants::gainToDb (residualLin);
+                if (residualDb > kMergeMaxResidualDb)
+                    soft *= constants::dbToGain (kMergeMaxResidualDb) / residualLin;
+                else if (residualDb < -kMergeMaxResidualDb)
+                    soft *= constants::dbToGain (-kMergeMaxResidualDb) / residualLin;
+                targetScale = soft;
                 break;
             }
         }

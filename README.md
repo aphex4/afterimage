@@ -4,25 +4,35 @@
 
 AFTERIMAGE is a real-time spectral memory processor. It continuously analyzes and stores a short history of the signal’s spectral content so the present can interact with its own recent past — producing evolving spectral echoes, ghost harmonics, frequency suppression, and morphing textures.
 
-> **Current milestone: v1.0 Release Candidate**  
-> Shadow / Erase / Merge with perceptual Influence mapping, Gain Match, factory presets (subtle/medium/extreme), Memory Well, Ed25519 license activation, and validation tests.
+> **Current milestone: 1.0.0-rc.1 (Release Candidate)**  
+> Not ear-signed-off for final v1.0. Shadow / Erase / Merge use stabilized **SpectralMemoryProfile** recall (multi-age Shadow, familiarity Erase, dual-profile Merge), perceptual Influence, Gain Match, mode-grouped factory presets, Memory Well, Ed25519 license activation, and validation tests.
+
+### Versioning choice
+
+| Field | Value | Why |
+|-------|-------|-----|
+| CMake `PROJECT_VERSION` / JUCE `VersionCode` + `JucePlugin_VersionString` | `1.0.0` → `0x10000` | JUCE’s `_juce_version_code` only accepts integer `MAJOR.MINOR.PATCH` tokens; feeding `1.0.0-rc.1` breaks the hex math |
+| Marketing / docs / `AFTERIMAGE_VERSION_STRING` | `1.0.0-rc.1` | Honest RC label until ear audition sign-off |
+
+Do **not** claim READY FOR V1.0 without DAW ear A/B.
 
 ---
 
 ## Features
 
 - Overlap-add STFT with host latency + latency-compensated dry/wet
-- Per-channel spectral history with Freeze and Memory Length
-- **Shadow** — additive spectral ghost (controlled loudness rise, not forced energy match)
-- **Erase** — sensitive overlap carve where memory meets the present
-- **Merge** — log-magnitude morph toward recalled memory
+- Per-channel spectral history; Freeze captures a stabilized recent memory profile
+- **Shadow** — multi-age spectral tail / ghost from diffused memory profiles
+- **Erase** — relative-prominence familiarity carve (repeated content hollows out)
+- **Merge** — log-envelope morph between a short current profile and recalled memory
 - **Random Recall** — slow smoothed wander around Recall Position
-- **Gain Match** — broadband loudness trim of the completed mix vs latency-aligned dry (tone/stereo/mix unchanged)
-- Factory presets in subtle / medium / extreme categories
-- Shared controls: Recall (ring), Forget (retention floor), Blur (history only), Transient Preserve, Influence (perceptual curve), Mix, Output, Freeze, Bypass
+- **Gain Match** — broadband loudness trim of the completed mix vs latency-aligned dry
+- Factory presets grouped by mode (Shadow / Erase / Merge banks)
+- Shared controls: Recall (ring), Forget (retention floor), Blur (mode-specific), Transient Preserve, Influence (perceptual curve), Mix, Output, Freeze, Bypass
 - Offline licensing: 14-day trial, signed `.afterimage-license`, compact activation UI
 - ~80 ms click-free crossfade when switching modes
 - Memory Well particle visualization (DSP-seeded)
+- Formats: **VST3**, **AU** (macOS), **Standalone**
 
 ---
 
@@ -32,8 +42,9 @@ AFTERIMAGE is a real-time spectral memory processor. It continuously analyzes an
 |-------|------|
 | STFT (FFT 2048 / hop 512 / Hann) | Analysis & resynthesis |
 | Spectral history buffer | Circular store of magnitude/phase frames (0.1–10 s) |
-| Modes | Shadow, Erase, Merge |
-| Blur / Forget / Transients / Random | History smoothing, age weighting, attack preservation, recall wander |
+| SpectralMemoryProfile | ~200 ms Gaussian-weighted recall window (+ variance stability) |
+| Modes | Shadow, Erase, Merge (see [docs/EFFECT_ENGINE.md](docs/EFFECT_ENGINE.md)) |
+| Blur / Forget / Transients / Random | Mode-specific blur, age weighting, attack preservation, recall wander |
 | Dry/wet | Latency-compensated equal-power mix |
 
 ---
@@ -68,7 +79,7 @@ If no local path is found, CMake fetches **JUCE 8.0.6** via FetchContent (requir
 ```bash
 cd ~/dev/AFTERIMAGE
 
-# Configure (Release)
+# Configure (Release) — copies VST3/AU into ~/Library/Audio/Plug-Ins/…
 cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
 
 # Or with an explicit JUCE path:
@@ -88,7 +99,8 @@ cmake -B build -S . -DAFTERIMAGE_BUILD_LICENSE_TOOL=ON -DJUCE_PATH=$HOME/dev/Spa
 cmake --build build --target AfterimageLicenseTool -j
 ```
 
-Licensing details: [`docs/LICENSING.md`](docs/LICENSING.md).
+Licensing details: [`docs/LICENSING.md`](docs/LICENSING.md).  
+Packaging / notarization (optional, needs your Developer ID): [`docs/PACKAGING.md`](docs/PACKAGING.md).
 
 ### CMake options
 
@@ -97,8 +109,11 @@ Licensing details: [`docs/LICENSING.md`](docs/LICENSING.md).
 | `AFTERIMAGE_ENABLE_LICENSING` | ON | Offline signed-license system |
 | `AFTERIMAGE_BUILD_LICENSE_TOOL` | OFF | Build `AfterimageLicenseTool` |
 | `AFTERIMAGE_USE_TEST_LICENSE_KEY` | OFF | Embed test public key (tests only; never ship) |
+| `AFTERIMAGE_COMMERCIAL_RELEASE` | OFF | Fail if production key missing; enables Plug-Ins copy |
 
 ### Debug build
+
+Debug **does not** copy into `~/Library/Audio/Plug-Ins/` (avoids overwriting a Release install). Artefacts stay in the build tree.
 
 ```bash
 cmake -B build-debug -S . -DCMAKE_BUILD_TYPE=Debug -DJUCE_PATH=$HOME/dev/Spawnclone/JUCE
@@ -120,19 +135,24 @@ After a **Debug** build:
 open build-debug/AFTERIMAGE_artefacts/Debug/Standalone/AFTERIMAGE.app
 ```
 
-### VST3 output location
+### Plugin output locations
 
-With `COPY_PLUGIN_AFTER_BUILD` enabled, the VST3 is copied to the user plug-in folder:
+**Release** (and commercial) builds copy into the user plug-in folders:
 
 ```text
 ~/Library/Audio/Plug-Ins/VST3/AFTERIMAGE.vst3
+~/Library/Audio/Plug-Ins/Components/AFTERIMAGE.component   # AU
 ```
 
-Build tree copy (Release):
+Build-tree copies:
 
 ```text
 build/AFTERIMAGE_artefacts/Release/VST3/AFTERIMAGE.vst3
+build/AFTERIMAGE_artefacts/Release/AU/AFTERIMAGE.component
+build-debug/AFTERIMAGE_artefacts/Debug/VST3/AFTERIMAGE.vst3   # Debug: build tree only
 ```
+
+VST3 category: `Fx|Filter|Modulation`.
 
 ---
 
@@ -164,23 +184,23 @@ CMake options: `AFTERIMAGE_ENABLE_LICENSING` (default ON), `AFTERIMAGE_BUILD_LIC
 | Recall | 0–100% | Position in history (0 = newest); scrub via Memory Well ring |
 | Influence | 0–100% | Perceptual curve (exact 0/1); mid range more useful |
 | Forget | 0–100% | Age weighting with mode-specific retention floor |
-| Blur | 0–100% | Inter-bin smoothing of **history** magnitudes (RMS preserved) |
+| Blur | 0–100% | Mode-specific: Shadow diffusion / Erase mask width / Merge envelope |
 | Transients | 0–100% | Attack preservation (max ~65% influence reduction) |
 | Random | 0–100% | Slow smoothed wander around Recall Position |
-| Freeze | on/off | Stop writing new history frames |
+| Freeze | on/off | Hold a stabilized recent memory profile |
 | Gain Match | on/off | Match mixed level to latency-aligned dry (broadband scalar) |
 | Mix | 0–100% | Equal-power dry/wet |
 | Output | −24…+12 dB | Output gain |
 | Bypass | on/off | Smoothed host-friendly bypass |
 | License | header chip | Trial / licensed / invalid — click to activate |
-| Preset | factory list | Applies parameter values only; clears live history |
+| Preset | factory list | Shadow / Erase / Merge sections; parameters only; clears live history |
 
 ---
 
 ## UI notes
 
 - Typography uses host system geometric sans (`Avenir Next` on macOS). See `Assets/Fonts/README.md`.
-- Custom tooltips (dark elevated cards, ~550 ms delay) replace default JUCE bars.
+- Custom tooltips (dark elevated cards, ~550 ms delay) replace default JUCE bars. Influence and Blur tips follow the active mode.
 - Dock groups: Memory | Spectral processing | Output.
 - `EDITOR_WANTS_KEYBOARD_FOCUS` is **FALSE** so DAW hosts keep primary keyboard focus. In Standalone, the mode selector accepts arrow keys when focused.
 - Recall Ring: click/drag inside the Memory Well only; clicks outside do not change Recall.
@@ -192,7 +212,8 @@ CMake options: `AFTERIMAGE_ENABLE_LICENSING` (default ON), `AFTERIMAGE_BUILD_LIC
 - **Stereo Link** deferred — L/R keep independent spectral histories
 - Session/preset state stores parameters only (never live spectral history)
 - Offline licensing is commercial deterrence, not unbreakable DRM (see `docs/LICENSING.md`)
-- Musical calibration of Influence curves should be confirmed by DAW audition
+- Musical calibration and final v1.0 claim require DAW ear audition
+- Notarized installers need a local Developer ID (see `docs/PACKAGING.md`) — not automated in-repo
 
 ---
 
@@ -202,7 +223,9 @@ CMake options: `AFTERIMAGE_ENABLE_LICENSING` (default ON), `AFTERIMAGE_BUILD_LIC
 2. **Audible retune** — perceptual Influence, retention floors, mode formulas ✅
 3. **Licensing** — offline Ed25519 licenses + trial + activation UI ✅
 4. **Gain Match** — post-mix broadband loudness match ✅
-5. **Next** — optional online activation; Stereo Link; user preset slots
+5. **Spectral memory redesign** — SpectralMemoryProfile + multi-age Shadow / Erase / Merge ✅ (RC)
+6. **Before v1.0** — ear A/B sign-off; optional notarized packaging
+7. **Later** — optional online activation; Stereo Link; user preset slots
 
 ---
 

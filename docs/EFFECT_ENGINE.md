@@ -84,7 +84,7 @@ fine = current / curEnv   // damped by Blur
 out = fine * dbToGain(mergedDb)
 ```
 
-**Blur** is the signature control (envelope width + fine-structure damp). Soft energy stabilisation ±~2.5 dB. Current phase only.
+**Blur** is the signature control (envelope width + fine-structure damp). Soft energy match (~94% toward unity, residual capped ±1.25 dB) so mid Influence does not amp several dB before Gain Match. Current phase only.
 
 ## DebugAudition
 

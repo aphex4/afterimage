@@ -45,7 +45,7 @@ private:
     void buildDock();
     void wireRecall();
     void buildPresetMenu();
-    void updateInfluenceTooltip (afterimage::SpectralMode mode);
+    void updateModeDynamicTooltips (afterimage::SpectralMode mode);
 
     AfterimageAudioProcessor& audioProcessor;
     AfterimageLookAndFeel lookAndFeel;

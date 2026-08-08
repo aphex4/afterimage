@@ -47,9 +47,24 @@ inline constexpr const char* forget =
     "Makes older remembered sounds fade faster.\n"
     "Lower values preserve older memories longer.";
 
+inline constexpr const char* blurShadow =
+    "BLUR\n"
+    "Spreads the remembered ghost across nearby frequencies.\n"
+    "Higher values make the spectral tail softer and more diffuse.";
+
+inline constexpr const char* blurErase =
+    "BLUR\n"
+    "Widens the frequencies removed by Erase.\n"
+    "Higher values carve broader, less precise hollows.";
+
+inline constexpr const char* blurMerge =
+    "BLUR\n"
+    "Widens the tonal envelope Merge borrows from memory.\n"
+    "Higher values soften detail and deepen the blend.";
+
 inline constexpr const char* blur =
     "BLUR\n"
-    "Smooths the remembered frequencies before they are applied.\n"
+    "Smooths remembered frequencies before they are applied.\n"
     "Higher values create a softer, less detailed effect.";
 
 inline constexpr const char* transientPreserve =
@@ -147,6 +162,17 @@ inline constexpr const char* memoryStatus =
         case SpectralMode::Shadow: return influenceShadow;
     }
     return influenceShadow;
+}
+
+[[nodiscard]] inline const char* blurForMode (SpectralMode mode) noexcept
+{
+    switch (mode)
+    {
+        case SpectralMode::Erase:  return blurErase;
+        case SpectralMode::Merge:  return blurMerge;
+        case SpectralMode::Shadow: return blurShadow;
+    }
+    return blurShadow;
 }
 
 [[nodiscard]] inline const char* modeFor (SpectralMode mode) noexcept

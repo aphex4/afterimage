@@ -1,5 +1,8 @@
 # Build
 /build/
+/build-debug/
+/build-asan/
+/build-commercial-check/
 /cmake-build-*/
 /.cache/
 
@@ -21,4 +24,3 @@ compile_commands.json
 
 # Local test scratch
 /Tests/_license_storage_tmp/
-/build-debug/

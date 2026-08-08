@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.22)
 
+# CMake/JUCE VersionCode need MAJOR.MINOR.PATCH integers. Marketing RC label lives in
+# AFTERIMAGE_VERSION_STRING (and docs) until ear sign-off — do not feed "1.0.0-rc.1" into
+# juce_add_plugin VERSION (breaks _juce_version_code math on the "0-rc" token).
 project(AFTERIMAGE VERSION 1.0.0 LANGUAGES C CXX)
+set(AFTERIMAGE_VERSION_STRING "1.0.0-rc.1")
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -9,6 +13,12 @@ enable_testing()
 
 if(APPLE AND NOT CMAKE_OSX_ARCHITECTURES)
     set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "macOS architectures" FORCE)
+endif()
+
+# Plugin formats: VST3 + Standalone always; AU on macOS.
+set(AFTERIMAGE_PLUGIN_FORMATS VST3 Standalone)
+if(APPLE)
+    list(APPEND AFTERIMAGE_PLUGIN_FORMATS AU)
 endif()
 
 set(JUCE_PATH "" CACHE PATH "Path to a local JUCE checkout (optional)")
@@ -103,7 +113,7 @@ juce_add_plugin(AFTERIMAGE
     COMPANY_NAME            "AdamAudio"
     PLUGIN_MANUFACTURER_CODE Adam
     PLUGIN_CODE             AfIm
-    FORMATS                 VST3 Standalone
+    FORMATS                 ${AFTERIMAGE_PLUGIN_FORMATS}
     PRODUCT_NAME            "AFTERIMAGE"
     BUNDLE_ID               "com.adamaudio.afterimage"
     IS_SYNTH                FALSE
@@ -113,9 +123,25 @@ juce_add_plugin(AFTERIMAGE
     # Keep FALSE so DAW hosts retain primary keyboard focus. ModeSelector still
     # accepts keys when it has focus inside the Standalone editor.
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
-    COPY_PLUGIN_AFTER_BUILD TRUE
-    VST3_CATEGORIES         "Fx Distortion Modulation"
+    # Default off so Debug builds never overwrite ~/Library/.../AFTERIMAGE.vst3.
+    # Release / commercial builds re-enable copy below.
+    COPY_PLUGIN_AFTER_BUILD FALSE
+    # Space-separated → JUCE joins as Fx|Filter|Modulation (not one bogus token).
+    VST3_CATEGORIES         Fx Filter Modulation
     DESCRIPTION             "Spectral memory processor. Every sound leaves a ghost.")
+
+# Host-visible JUCE VersionString stays "1.0.0" (feeds VersionCode 0x10000).
+# Marketing RC label for docs / our code: AFTERIMAGE_VERSION_STRING.
+target_compile_definitions(AFTERIMAGE PUBLIC
+    AFTERIMAGE_VERSION_STRING="${AFTERIMAGE_VERSION_STRING}")
+
+# Copy into user Plug-Ins only for Release single-config or commercial packaging.
+if(AFTERIMAGE_COMMERCIAL_RELEASE OR (CMAKE_BUILD_TYPE STREQUAL "Release"))
+    set_target_properties(AFTERIMAGE PROPERTIES JUCE_COPY_PLUGIN_AFTER_BUILD TRUE)
+    message(STATUS "AFTERIMAGE: COPY_PLUGIN_AFTER_BUILD enabled (Release/commercial)")
+else()
+    message(STATUS "AFTERIMAGE: COPY_PLUGIN_AFTER_BUILD disabled (Debug stays in build tree)")
+endif()
 
 juce_generate_juce_header(AFTERIMAGE)
 
@@ -213,6 +239,7 @@ target_compile_definitions(AFTERIMAGE_Tests
         JucePlugin_Version=1.0.0
         JucePlugin_VersionCode=0x10000
         JucePlugin_VersionString="1.0.0"
+        AFTERIMAGE_VERSION_STRING="${AFTERIMAGE_VERSION_STRING}"
         JucePlugin_VSTUniqueID=JucePlugin_PluginCode
         JucePlugin_VSTCategory=kPlugCategEffect)
 

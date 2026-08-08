@@ -392,7 +392,11 @@ static void testMergeEnvelopeAndNaNGuard()
     p.transientPreserve = 0.0f;
 
     auto before = cur;
-    modes.applyMergeMagnitudes (cur.data(), hist.data(), constants::numBins, p, 0);
+    for (int frame = 0; frame < 48; ++frame)
+    {
+        cur = before;
+        modes.applyMergeMagnitudes (cur.data(), hist.data(), constants::numBins, p, 0);
+    }
 
     double eIn = 0.0, eOut = 0.0;
     for (int i = 0; i < constants::numBins; ++i)
@@ -403,7 +407,7 @@ static void testMergeEnvelopeAndNaNGuard()
         eOut += (double) cur[(size_t) i] * cur[(size_t) i];
     }
     const float ratio = (float) std::sqrt (eOut / std::max (eIn, 1e-20));
-    CHECK (ratio > 0.25f && ratio < 4.0f); // no runaway gain
+    CHECK (ratio > 0.55f && ratio < 1.40f); // soft energy bound after smoother settle
     // Envelope should have moved toward history formants (bin ~55 rises relative)
     CHECK (cur[55] / (before[55] + 1e-6f) > 0.5f);
 }

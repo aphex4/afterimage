@@ -408,6 +408,45 @@ void testMergeSilenceAndStereoIsolation()
     CHECK (fixtures::sumSq (b1.data(), constants::numBins) > 1e-6);
 }
 
+/** Mid Influence must not amp several dB before Gain Match (soft energy policy). */
+void testMergeMidInfluenceEnergyBound()
+{
+    std::cout << "Merge mid-Influence energy bound...\n";
+    SpectralModeProcessor modes;
+    modes.prepare (constants::numBins, 48000.0, 1);
+
+    std::vector<float> quietCarrier, loudMemory;
+    fixtures::fillPinkTilt (quietCarrier, 0.35f);
+    fixtures::fillFormant (loudMemory, 45.0f, 140.0f, 2.4f);
+
+    for (float influence : { 0.40f, 0.50f, 0.60f })
+    {
+        modes.reset();
+        auto p = makeParams (influence, 0.25f, 0.35f, 0.45f);
+        std::vector<float> cur;
+
+        // Settle energy smoother (same path as realtime hops).
+        for (int frame = 0; frame < 48; ++frame)
+        {
+            cur = quietCarrier;
+            modes.applyMergeMagnitudes (cur.data(), loudMemory.data(), constants::numBins, p, 0);
+        }
+
+        const double eIn = fixtures::sumSq (quietCarrier.data(), constants::numBins);
+        const double eOut = fixtures::sumSq (cur.data(), constants::numBins);
+        const float ampDb = 20.0f * std::log10 (std::sqrt (eOut / std::max (eIn, 1e-20)) + 1e-12f);
+        std::cout << "  Influence " << (int) std::lround (influence * 100.0f)
+                  << "% ampDb=" << ampDb << "\n";
+        CHECK (std::isfinite (ampDb));
+        // Soft policy caps residual ≈ ±1.25 dB; allow small settle margin.
+        CHECK (ampDb < 1.75f);
+        CHECK (ampDb > -1.75f);
+        // Still morphs — not a no-op
+        CHECK (fixtures::logSpectralDistance (cur.data(), quietCarrier.data(),
+                                              constants::numBins) > 0.05);
+    }
+}
+
 void testLoudnessStability()
 {
     std::cout << "Loudness / stability probes...\n";
@@ -495,6 +534,7 @@ void runEffectStrengthTests()
     testEraseProgressiveAndFreeze();
     testMergeEffectStrength();
     testMergeSilenceAndStereoIsolation();
+    testMergeMidInfluenceEnergyBound();
     testLoudnessStability();
     testBaselineDiagnosisPrint();
 }
