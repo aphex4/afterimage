@@ -90,7 +90,11 @@ public:
     /** Diagnostics / tests: effective memory profile after Freeze crossfade. */
     [[nodiscard]] const SpectralMemoryProfile& getEffectiveMemoryProfile (int channel = 0) const noexcept;
     [[nodiscard]] float getFreezeCrossfadeAmount() const noexcept { return freezeCrossfade_; }
+    /** True after freeze profile/stencil has been captured and history is locked. */
     [[nodiscard]] bool isFreezeEngaged() const noexcept { return freezeEngaged_; }
+    /** True while Freeze is on but waiting for enough history to capture. */
+    [[nodiscard]] bool isFreezeArmed() const noexcept { return freezeArmed_; }
+    [[nodiscard]] bool isFreezeTarget() const noexcept { return freezeTarget_; }
 
 private:
     static void spectrumCallback (void* userData,
@@ -102,6 +106,9 @@ private:
     void clearHistoryOnAudioThread() noexcept;
     void publishVisualization (int channelIndex) noexcept;
     void updateFreezeState (bool freezeTarget, int hopSamples) noexcept;
+    void captureFreezeProfiles() noexcept;
+    void syncHistoryFrozenFlag() noexcept;
+    [[nodiscard]] bool historyReadyForFreezeCapture() const noexcept;
     void buildEffectiveProfile (int channelIndex, float recallAge01) noexcept;
 
     STFTProcessor stft_;
@@ -134,8 +141,8 @@ private:
     std::uint32_t wanderRng_ = 0xA5F1C3E9u;
 
     bool freezeTarget_ = false;
-    bool freezeEngaged_ = false;
-    bool freezeWasTarget_ = false;
+    bool freezeArmed_ = false;   // Freeze on, waiting for capture window
+    bool freezeEngaged_ = false; // Capture done; history locked
     float freezeCrossfade_ = 1.0f; // 0 = live, 1 = fully frozen
 
     double sampleRate_ = 44100.0;

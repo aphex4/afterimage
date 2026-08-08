@@ -91,8 +91,8 @@ void SpectralEngine::reset()
 
     wanderOffset_ = 0.0f;
     wanderRng_ = 0xA5F1C3E9u;
+    freezeArmed_ = false;
     freezeEngaged_ = false;
-    freezeWasTarget_ = false;
     freezeCrossfade_ = 1.0f;
 }
 
@@ -114,8 +114,18 @@ void SpectralEngine::setSpectralParameterTargets (float influence,
     frameSmoothers_.setSpectralTargets (influence, recall, forget, blur, transientPreserve, randomRecall);
     freezeTarget_ = freeze;
 
-    for (auto& hist : histories_)
-        hist->setFrozen (freeze);
+    if (! freeze)
+    {
+        freezeArmed_ = false;
+        freezeEngaged_ = false;
+        freezeCrossfade_ = 0.0f;
+    }
+    else if (! freezeEngaged_)
+    {
+        freezeArmed_ = true;
+    }
+
+    syncHistoryFrozenFlag();
 }
 
 void SpectralEngine::setMode (SpectralMode mode) noexcept
@@ -149,9 +159,11 @@ void SpectralEngine::clearHistoryOnAudioThread() noexcept
     for (auto& p : effectiveProfiles_)
         p.clear();
 
+    // Preset load / clear with Freeze still on: re-arm so we can capture after audio arrives.
     freezeEngaged_ = false;
-    freezeWasTarget_ = freezeTarget_;
-    freezeCrossfade_ = freezeTarget_ ? 1.0f : 0.0f;
+    freezeArmed_ = freezeTarget_;
+    freezeCrossfade_ = 0.0f;
+    syncHistoryFrozenFlag();
 
     modes_.clearEraseMemory();
     modes_.clearShadowTail();
@@ -179,34 +191,91 @@ const SpectralMemoryProfile& SpectralEngine::getEffectiveMemoryProfile (int chan
     return effectiveProfiles_[static_cast<std::size_t> (idx)];
 }
 
-void SpectralEngine::updateFreezeState (bool freezeTarget, int hopSamples) noexcept
+void SpectralEngine::syncHistoryFrozenFlag() noexcept
 {
-    const bool rising = freezeTarget && ! freezeWasTarget_;
-    freezeWasTarget_ = freezeTarget;
-    freezeEngaged_ = freezeTarget;
+    // Only lock history writes after a real freeze capture — never while armed.
+    const bool lock = freezeEngaged_;
+    for (auto& hist : histories_)
+        hist->setFrozen (lock);
+}
 
-    if (rising)
+bool SpectralEngine::historyReadyForFreezeCapture() const noexcept
+{
+    if (histories_.empty() || sampleRate_ <= 0.0)
+        return false;
+
+    // Ready once we have at least a short stabilized window (~90 ms); capture still
+    // aggregates up to freezeCaptureWindowMs when more history is available.
+    const float hopMs = 1000.0f * static_cast<float> (stft_.getHopSize())
+                        / static_cast<float> (sampleRate_);
+    const int minFrames = std::max (
+        1, static_cast<int> (std::lround (constants::memoryProfileWindowMs
+                                          / std::max (1.0e-3f, hopMs))));
+
+    constexpr float kMinCaptureRms = 1.0e-5f;
+    bool anyEnergy = false;
+
+    for (int c = 0; c < numChannels_; ++c)
     {
-        // Capture stabilized recent profiles on Freeze press (all channels).
-        MemoryProfileOptions opts;
-        opts.windowMs = constants::freezeCaptureWindowMs;
-        opts.applyStability = true;
+        const auto& hist = *histories_[static_cast<std::size_t> (c)];
+        const int available = hist.getAvailableFrameCount();
+        if (available < minFrames)
+            return false;
 
-        for (int c = 0; c < numChannels_; ++c)
+        const int check = std::min (available, minFrames);
+        for (int age = 0; age < check; ++age)
         {
-            const auto& hist = *histories_[static_cast<std::size_t> (c)];
-            frozenProfiles_[static_cast<std::size_t> (c)].captureRecent (
-                hist, constants::freezeCaptureWindowMs, opts);
+            if (hist.getFrameByAgeFrames (age).rms >= kMinCaptureRms)
+            {
+                anyEnergy = true;
+                break;
+            }
         }
-
-        modes_.onFreezeEngaged();
-        freezeCrossfade_ = 0.0f; // start morph live → frozen
     }
 
+    return anyEnergy;
+}
+
+void SpectralEngine::captureFreezeProfiles() noexcept
+{
+    MemoryProfileOptions opts;
+    opts.windowMs = constants::freezeCaptureWindowMs;
+    opts.applyStability = true;
+
+    for (int c = 0; c < numChannels_; ++c)
+    {
+        const auto& hist = *histories_[static_cast<std::size_t> (c)];
+        frozenProfiles_[static_cast<std::size_t> (c)].captureRecent (
+            hist, constants::freezeCaptureWindowMs, opts);
+    }
+
+    modes_.onFreezeEngaged();
+    freezeEngaged_ = true;
+    freezeArmed_ = false;
+    freezeCrossfade_ = 0.0f; // start morph live → frozen
+    syncHistoryFrozenFlag();
+}
+
+void SpectralEngine::updateFreezeState (bool freezeTarget, int hopSamples) noexcept
+{
     if (! freezeTarget)
     {
+        freezeArmed_ = false;
+        freezeEngaged_ = false;
         freezeCrossfade_ = 0.0f;
+        syncHistoryFrozenFlag();
         return;
+    }
+
+    if (! freezeEngaged_)
+    {
+        freezeArmed_ = true;
+        syncHistoryFrozenFlag();
+
+        if (historyReadyForFreezeCapture())
+            captureFreezeProfiles();
+        else
+            return;
     }
 
     if (freezeCrossfade_ >= 1.0f - 1.0e-4f)
@@ -353,7 +422,10 @@ void SpectralEngine::onSpectrum (float* interleavedFftData, int fftSize, int cha
     // Advance spectral smoothers once per hop (channel 0 only); share params for L/R.
     if (channelIndex == 0)
     {
-        hopParams_ = frameSmoothers_.snapSpectralParamsForHop (stft_.getHopSize(), freezeTarget_);
+        updateFreezeState (freezeTarget_, stft_.getHopSize());
+
+        // Mode freeze (tail / blur EMA / erase) only after capture — not while armed.
+        hopParams_ = frameSmoothers_.snapSpectralParamsForHop (stft_.getHopSize(), freezeEngaged_);
         hopParams_.memoryLengthSeconds = memoryLengthSeconds_;
 
         const float hopSec = static_cast<float> (stft_.getHopSize())
@@ -363,8 +435,6 @@ void SpectralEngine::onSpectrum (float* interleavedFftData, int fftSize, int cha
                                                          hopParams_.recallPosition,
                                                          hopParams_.randomRecall,
                                                          hopSec);
-
-        updateFreezeState (freezeTarget_, stft_.getHopSize());
     }
 
     auto& hist = *histories_[static_cast<std::size_t> (channelIndex)];

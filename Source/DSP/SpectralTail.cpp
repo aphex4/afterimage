@@ -145,6 +145,19 @@ void SpectralTail::processHop (int channelIndex,
         frameMax = std::max (frameMax, inputMagnitudes[k]);
     const float frameThreshold = frameMax * 0.005f;
 
+    // Freeze with an empty accumulator would lock silence forever (inject=0, decay=1).
+    // Arm until some energy has been injected, then fully freeze.
+    bool accumulatorHasEnergy = false;
+    for (int k = 0; k < numBins_; ++k)
+    {
+        if (pow[static_cast<std::size_t> (k)] >= kDenormalFlush)
+        {
+            accumulatorHasEnergy = true;
+            break;
+        }
+    }
+    const bool applyFreeze = params.freeze && accumulatorHasEnergy;
+
     for (int k = 0; k < numBins_; ++k)
     {
         const auto i = static_cast<std::size_t> (k);
@@ -172,9 +185,9 @@ void SpectralTail::processHop (int channelIndex,
 
         // (b)/(c) Power-domain decay + accumulate (incoherent energy add)
         const float decay = coeffs[i];
-        const float d = params.freeze ? 1.0f : decay;
+        const float d = applyFreeze ? 1.0f : decay;
         const float d2 = d * d;
-        const float injectPow = params.freeze
+        const float injectPow = applyFreeze
                                     ? 0.0f
                                     : params.injectGain * params.injectGain * (1.0f - d2);
 

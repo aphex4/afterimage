@@ -18,7 +18,7 @@ struct SpectralTailParams
     float shimmerCents = 0.0f;   // slow random detune of ghost phase advance
     float spectralDiffusion = 0.25f; // 0 = none, 1 = fully smeared each hop
     float diffusionOctaves  = 0.25f; // constant-Q width of the per-hop spread
-    bool  freeze       = false;  // inject = 0, decay = 1
+    bool  freeze       = false;  // inject = 0, decay = 1 (armed until accumulator has energy)
 };
 
 /**

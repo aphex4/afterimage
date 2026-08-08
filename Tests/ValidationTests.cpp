@@ -392,6 +392,111 @@ static void testFreezeProfileCaptureAndLimiter()
 }
 
 //==============================================================================
+static void testFreezeArmUntilHistoryReady()
+{
+    std::cout << "Freeze arms until history ready (empty / preset load)...\n";
+
+    constexpr double sr = 48000.0;
+    SpectralEngine engine;
+    engine.prepare (sr, 512, 2);
+    engine.setMode (SpectralMode::Shadow);
+    engine.setActiveMemoryLengthSeconds (4.0f);
+
+    // Freeze on with empty history (Frozen Choir / factory preset path).
+    engine.setSpectralParameterTargets (0.62f, 0.45f, 0.15f, 0.35f, 0.30f, 0.0f, true);
+    engine.snapSpectralSmoothersToTargets();
+
+    CHECK (engine.isFreezeTarget());
+    CHECK (engine.isFreezeArmed());
+    CHECK (! engine.isFreezeEngaged());
+    CHECK (! engine.getHistory (0).isFrozen());
+
+    juce::AudioBuffer<float> silence (2, 512);
+    silence.clear();
+    for (int n = 0; n < 40; ++n)
+        engine.process (silence);
+
+    // Silence alone must not lock an empty freeze profile.
+    CHECK (engine.isFreezeArmed());
+    CHECK (! engine.isFreezeEngaged());
+    CHECK (! engine.getHistory (0).isFrozen());
+    CHECK (engine.getHistory (0).getAvailableFrameCount() > 0);
+
+    juce::AudioBuffer<float> buf (2, 512);
+    auto fillTone = [&] (int blockIndex)
+    {
+        for (int s = 0; s < 512; ++s)
+        {
+            const float t = (float) (blockIndex * 512 + s) / (float) sr;
+            const float v = 0.25f * std::sin (2.0f * juce::MathConstants<float>::pi * 220.0f * t);
+            buf.setSample (0, s, v);
+            buf.setSample (1, s, v * 0.95f);
+        }
+    };
+
+    bool captured = false;
+    for (int n = 0; n < 80; ++n)
+    {
+        fillTone (n);
+        engine.process (buf);
+        if (engine.isFreezeEngaged())
+        {
+            captured = true;
+            break;
+        }
+    }
+
+    CHECK (captured);
+    CHECK (engine.isFreezeEngaged());
+    CHECK (! engine.isFreezeArmed());
+    CHECK (engine.getHistory (0).isFrozen());
+    CHECK (engine.getEffectiveMemoryProfile (0).getEnergy() > 0.0f);
+
+    const int lockedFrames = engine.getHistory (0).getAvailableFrameCount();
+    for (int n = 0; n < 20; ++n)
+    {
+        fillTone (n + 100);
+        engine.process (buf);
+    }
+    CHECK (engine.getHistory (0).getAvailableFrameCount() == lockedFrames);
+
+    // Frozen Shadow must remain audible on silence (non-identity) once the tail locked.
+    double wetEnergy = 0.0;
+    for (int n = 0; n < 40; ++n)
+    {
+        silence.clear();
+        engine.process (silence);
+        for (int ch = 0; ch < 2; ++ch)
+            for (int s = 0; s < silence.getNumSamples(); ++s)
+            {
+                const float y = silence.getSample (ch, s);
+                wetEnergy += (double) y * (double) y;
+                CHECK (std::isfinite (y));
+            }
+    }
+    CHECK (wetEnergy > 1.0e-4);
+
+    // Cancel arming if Freeze turns off before capture.
+    SpectralEngine engine2;
+    engine2.prepare (sr, 512, 1);
+    engine2.setMode (SpectralMode::Merge);
+    engine2.setSpectralParameterTargets (0.5f, 0.4f, 0.25f, 0.3f, 0.3f, 0.0f, true);
+    CHECK (engine2.isFreezeArmed());
+    engine2.setSpectralParameterTargets (0.5f, 0.4f, 0.25f, 0.3f, 0.3f, 0.0f, false);
+    CHECK (! engine2.isFreezeArmed());
+    CHECK (! engine2.isFreezeEngaged());
+
+    // Clear-history while Freeze stays on must re-arm (preset reload).
+    engine.requestClearHistory();
+    silence.clear();
+    engine.process (silence);
+    CHECK (engine.isFreezeTarget());
+    CHECK (engine.isFreezeArmed());
+    CHECK (! engine.isFreezeEngaged());
+    CHECK (! engine.getHistory (0).isFrozen());
+}
+
+//==============================================================================
 static void testMergeEnvelopeAndNaNGuard()
 {
     std::cout << "Merge blur / NaN / gain bounds...\n";
@@ -1298,6 +1403,7 @@ int main()
     testHistoryInterpolationFocused();
     testSpectralMemoryProfile();
     testFreezeProfileCaptureAndLimiter();
+    testFreezeArmUntilHistoryReady();
     testMergeEnvelopeAndNaNGuard();
     testForgetAgeWeight();
     testBlur();
