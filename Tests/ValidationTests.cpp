@@ -1179,11 +1179,11 @@ static void testStftIdentity()
         CHECK_NEAR (buf.getMagnitude (0, 0, 4096), 0.0f, 1e-7);
     }
 
-    // WOLA table consistency
+    // WOLA table consistency — periodic Hann at 8× overlap is exact COLA
     {
         STFTProcessor stft;
         stft.prepare (48000.0, 512, 1);
-        CHECK (stft.getMaxWolaScaleDeviation() < 0.05f); // should be nearly constant
+        CHECK (stft.getMaxWolaScaleDeviation() < 1.0e-5f);
         std::cout << "  WOLA max relative deviation=" << stft.getMaxWolaScaleDeviation() << "\n";
     }
 
@@ -1194,6 +1194,66 @@ static void testStftIdentity()
         for (int hostBlock : blocks)
             for (int ch : { 1, 2 })
                 runStftIdentityCase (sr, 512, hostBlock, ch);
+}
+
+//==============================================================================
+/** Phase 0.3: L/R hop sync — same stereo signal in one large block vs many hops must match. */
+static void testStftBlockSizeInvariance()
+{
+    std::cout << "STFT block-size invariance...\n";
+
+    constexpr double sr = 48000.0;
+    constexpr int numCh = 2;
+    const int totalSamples = constants::fftSize; // one large block = 4096
+
+    auto fillSignal = [&] (juce::AudioBuffer<float>& buf)
+    {
+        buf.clear();
+        for (int ch = 0; ch < numCh; ++ch)
+        {
+            for (int i = 0; i < buf.getNumSamples(); ++i)
+            {
+                const float t = static_cast<float> (i) / static_cast<float> (sr);
+                const float s = 0.4f * std::sin (2.0f * juce::MathConstants<float>::pi * 220.0f * t)
+                              + 0.25f * std::sin (2.0f * juce::MathConstants<float>::pi * 880.0f * t
+                                                   + static_cast<float> (ch) * 0.7f);
+                buf.setSample (ch, i, s);
+            }
+        }
+    };
+
+    juce::AudioBuffer<float> oneShot (numCh, totalSamples);
+    juce::AudioBuffer<float> chunked (numCh, totalSamples);
+    fillSignal (oneShot);
+    fillSignal (chunked);
+
+    STFTProcessor stftA, stftB;
+    stftA.prepare (sr, totalSamples, numCh);
+    stftB.prepare (sr, constants::hopSize, numCh);
+    stftA.setSpectrumCallback (nullptr, nullptr);
+    stftB.setSpectrumCallback (nullptr, nullptr);
+
+    stftA.process (oneShot);
+
+    for (int offset = 0; offset < totalSamples; offset += constants::hopSize)
+    {
+        const int n = std::min (constants::hopSize, totalSamples - offset);
+        float* ptrs[numCh];
+        for (int ch = 0; ch < numCh; ++ch)
+            ptrs[ch] = chunked.getWritePointer (ch) + offset;
+        juce::AudioBuffer<float> view (ptrs, numCh, n);
+        stftB.process (view);
+    }
+
+    double maxAbsErr = 0.0;
+    for (int ch = 0; ch < numCh; ++ch)
+        for (int i = 0; i < totalSamples; ++i)
+            maxAbsErr = std::max (maxAbsErr,
+                                  (double) std::abs (oneShot.getSample (ch, i)
+                                                     - chunked.getSample (ch, i)));
+
+    std::cout << "  max |oneShot - chunked| = " << maxAbsErr << "\n";
+    CHECK (maxAbsErr < 1.0e-5);
 }
 
 //==============================================================================
@@ -1218,6 +1278,7 @@ int main()
     testPhaseWriteback();
     testFftLayout();
     testStftIdentity();
+    testStftBlockSizeInvariance();
     testRandomRecallWander();
     testEngineInfluenceZeroAndFreeze();
     testEngineShadowAudibleVsIdentity();

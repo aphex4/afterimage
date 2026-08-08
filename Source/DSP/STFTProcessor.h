@@ -60,7 +60,6 @@ private:
         std::array<float, fftSize>     outRing {};
         std::array<float, 2 * fftSize> fftBuf  {};
         int  pos    = 0;
-        int  count  = 0;
         bool primed = false;
 
         void clear() noexcept
@@ -69,7 +68,6 @@ private:
             outRing.fill (0.0f);
             fftBuf.fill (0.0f);
             pos = 0;
-            count = 0;
             primed = false;
         }
     };
@@ -87,6 +85,7 @@ private:
 
     double sampleRate_     = 44100.0;
     int    numChannels_    = 2;
+    int    hopCounter_     = 0;
     int    latencySamples_ = 0;
     bool   prepared_       = false;
 };

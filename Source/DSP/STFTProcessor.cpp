@@ -38,13 +38,13 @@ void STFTProcessor::prepare (double sampleRate, int /*maxBlockSize*/, int numCha
     sampleRate_  = sampleRate;
     numChannels_ = std::max (1, numChannels);
 
-    // Symmetric Hann (zeros at ends).
+    // Periodic Hann — exact COLA at hop = N/R (symmetric Hann uses fftSize-1).
     for (int i = 0; i < fftSize; ++i)
     {
         window_[static_cast<size_t> (i)] =
             0.5f * (1.0f - std::cos (2.0f * juce::MathConstants<float>::pi
                                      * static_cast<float> (i)
-                                     / static_cast<float> (fftSize - 1)));
+                                     / static_cast<float> (fftSize)));
     }
 
     buildWolaTable();
@@ -61,6 +61,7 @@ void STFTProcessor::prepare (double sampleRate, int /*maxBlockSize*/, int numCha
 
 void STFTProcessor::reset()
 {
+    hopCounter_ = 0;
     for (auto& ch : channels_)
         ch->clear();
 }
@@ -125,13 +126,21 @@ void STFTProcessor::process (juce::AudioBuffer<float>& buffer) noexcept
     const int n     = buffer.getNumSamples();
     jassert (numCh >= 1);
 
+    // Hoist write pointers once — allocation-free, cache-friendly.
+    std::array<float*, 16> writePtrs {};
+    jassert (numCh <= static_cast<int> (writePtrs.size()));
     for (int c = 0; c < numCh; ++c)
-    {
-        auto& ch = *channels_[static_cast<size_t> (c)];
-        float* data = buffer.getWritePointer (c);
+        writePtrs[static_cast<size_t> (c)] = buffer.getWritePointer (c);
 
-        for (int s = 0; s < n; ++s)
+    // Sample-outer / channel-inner so hops fire in time order across channels.
+    // Shared hopCounter_ prevents L/R hop-parameter desync when host block > hop.
+    for (int s = 0; s < n; ++s)
+    {
+        for (int c = 0; c < numCh; ++c)
         {
+            auto& ch = *channels_[static_cast<size_t> (c)];
+            float* data = writePtrs[static_cast<size_t> (c)];
+
             ch.inRing[static_cast<size_t> (ch.pos)] = data[s];
 
             const int phase = ch.pos % hopSize;
@@ -143,12 +152,15 @@ void STFTProcessor::process (juce::AudioBuffer<float>& buffer) noexcept
             jassert (std::isfinite (data[s]));
 
             ch.pos = (ch.pos + 1) % fftSize;
+        }
 
-            if (++ch.count >= hopSize)
+        if (++hopCounter_ >= hopSize)
+        {
+            hopCounter_ = 0;
+            for (int c = 0; c < numCh; ++c)
             {
-                ch.count = 0;
-                ch.primed = true;
-                processFrame (ch, c);
+                channels_[static_cast<size_t> (c)]->primed = true;
+                processFrame (*channels_[static_cast<size_t> (c)], c);
             }
         }
     }

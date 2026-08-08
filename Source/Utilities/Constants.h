@@ -9,13 +9,17 @@ namespace afterimage
 namespace constants
 {
     // -------------------------------------------------------------------------
-    // STFT configuration (Phase 2+)
+    // STFT configuration
     // -------------------------------------------------------------------------
-    constexpr int    fftOrder           = 11;          // 2^11 = 2048
+    constexpr int    fftOrder           = 12;          // 2^12 = 4096
     constexpr int    fftSize            = 1 << fftOrder;
-    constexpr int    hopSize            = 512;         // 4x overlap
+    constexpr int    hopSize            = 512;         // 8x overlap
     constexpr int    overlapFactor      = fftSize / hopSize;
     constexpr int    numBins            = fftSize / 2 + 1;
+
+    // Incoherent OLA loses sqrt(R) of amplitude vs coherent content at the same magnitude.
+    // Apply to randomised / independently-propagated tail only — never the dry path.
+    inline const float incoherentOlaCompensation = std::sqrt (static_cast<float> (overlapFactor));
 
     // -------------------------------------------------------------------------
     // Spectral history
