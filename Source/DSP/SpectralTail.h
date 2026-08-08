@@ -52,7 +52,8 @@ private:
     double sampleRate_ = 44100.0;
 
     std::vector<std::vector<float>> tailMag_;
-    std::vector<std::vector<float>> ghostPhase_;
+    std::vector<std::vector<float>> ghostPhase_;   // clean propagated phase
+    std::vector<std::vector<float>> renderPhase_;  // ghost + per-hop diffusion offset
     std::vector<std::vector<float>> prevInputPhase_;
     std::vector<std::vector<float>> decayCoeff_;
     std::vector<std::vector<float>> shimmerLfo_;

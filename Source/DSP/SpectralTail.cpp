@@ -32,6 +32,7 @@ void SpectralTail::prepare (int numBins, double sampleRate, int hopSize, int num
 
     tailMag_.assign (chN, std::vector<float> (binN, 0.0f));
     ghostPhase_.assign (chN, std::vector<float> (binN, 0.0f));
+    renderPhase_.assign (chN, std::vector<float> (binN, 0.0f));
     prevInputPhase_.assign (chN, std::vector<float> (binN, 0.0f));
     decayCoeff_.assign (chN, std::vector<float> (binN, 0.0f));
     shimmerLfo_.assign (chN, std::vector<float> (binN, 0.0f));
@@ -61,6 +62,8 @@ void SpectralTail::reset() noexcept
     for (auto& v : tailMag_)
         std::fill (v.begin(), v.end(), 0.0f);
     for (auto& v : ghostPhase_)
+        std::fill (v.begin(), v.end(), 0.0f);
+    for (auto& v : renderPhase_)
         std::fill (v.begin(), v.end(), 0.0f);
     for (auto& v : prevInputPhase_)
         std::fill (v.begin(), v.end(), 0.0f);
@@ -114,6 +117,7 @@ void SpectralTail::processHop (int channelIndex,
     const auto ch = static_cast<std::size_t> (channelIndex);
     auto& mag = tailMag_[ch];
     auto& gphase = ghostPhase_[ch];
+    auto& rphase = renderPhase_[ch];
     auto& prevPh = prevInputPhase_[ch];
     auto& shimmer = shimmerLfo_[ch];
     auto& omegaHeld = tailOmega_[ch];
@@ -176,15 +180,16 @@ void SpectralTail::processHop (int channelIndex,
         if (prevMag < kDenormalFlush && mag[i] >= kDenormalFlush)
             gphase[i] = inPh;
 
-        // (d) Advance + diffuse ghost phase
+        // (d) Clean propagated phase — diffusion is a non-accumulating render offset.
         shimmer[i] += 0.002f * (nextBipolarRandom (rng) - shimmer[i]);
         const float detune = 1.0f + params.shimmerCents * shimmer[i] * 0.0005787f;
-        gphase[i] += omega * detune;
+        gphase[i] = princarg (gphase[i] + omega * detune);
 
+        float offset = 0.0f;
         if (params.diffusion > 1.0e-4f)
-            gphase[i] += params.diffusion * pi * nextGaussianApprox (rng);
+            offset = params.diffusion * pi * nextGaussianApprox (rng) * 2.0f;
 
-        gphase[i] = princarg (gphase[i]);
+        rphase[i] = princarg (gphase[i] + offset);
     }
 
     // Cross-bin constant-Q diffusion on the accumulator (compounds across hops).
@@ -215,9 +220,9 @@ const float* SpectralTail::getTailMagnitudes (int channelIndex) const noexcept
 
 const float* SpectralTail::getTailPhases (int channelIndex) const noexcept
 {
-    if (ghostPhase_.empty() || channelIndex < 0 || channelIndex >= numChannels_)
+    if (renderPhase_.empty() || channelIndex < 0 || channelIndex >= numChannels_)
         return nullptr;
-    return ghostPhase_[static_cast<std::size_t> (channelIndex)].data();
+    return renderPhase_[static_cast<std::size_t> (channelIndex)].data();
 }
 
 } // namespace afterimage
