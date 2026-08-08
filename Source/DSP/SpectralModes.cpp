@@ -694,6 +694,9 @@ void SpectralModeProcessor::applyShadowPath (float* magnitudes,
     }
     tp.diffusion = blur;
     tp.shimmerCents = blur * 12.0f;
+    // Always some spectral spread — even Blur 0 is a wash, not a bell bank.
+    tp.spectralDiffusion = 0.15f + blur * 0.45f;
+    tp.diffusionOctaves  = 0.15f + blur * 0.60f;
     tp.freeze = params.freeze;
 
     if (updateSmoothers)

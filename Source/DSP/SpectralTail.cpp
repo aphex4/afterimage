@@ -41,6 +41,10 @@ void SpectralTail::prepare (int numBins, double sampleRate, int hopSize, int num
     cachedHfDamp_.assign (chN, -1.0f);
     hasPrevPhase_.assign (chN, false);
 
+    diffuseScratch_.assign (binN, 0.0f);
+    prefixScratch_.assign (binN + 1, 0.0f);
+    smoother_.prepare (numBins_, sampleRate_, constants::fftSize);
+
     // Independent seeds per channel for stereo width under diffusion.
     if (numChannels_ >= 1)
         rng_[0] = 0xC0FFEEu ^ 0xA11CE5u;
@@ -175,6 +179,22 @@ void SpectralTail::processHop (int channelIndex,
             gphase[i] += params.diffusion * pi * nextGaussianApprox (rng);
 
         gphase[i] = princarg (gphase[i]);
+    }
+
+    // Cross-bin constant-Q diffusion on the accumulator (compounds across hops).
+    if (params.spectralDiffusion > 1.0e-4f
+        && static_cast<int> (diffuseScratch_.size()) >= numBins_
+        && static_cast<int> (prefixScratch_.size()) >= numBins_ + 1)
+    {
+        smoother_.setWidth (params.diffusionOctaves);
+        smoother_.process (mag.data(), diffuseScratch_.data(), numBins_, prefixScratch_.data());
+
+        const float s = clampf (params.spectralDiffusion, 0.0f, 1.0f);
+        for (int k = 0; k < numBins_; ++k)
+        {
+            const auto i = static_cast<std::size_t> (k);
+            mag[i] = mag[i] * (1.0f - s) + diffuseScratch_[i] * s;
+        }
     }
 
     hasPrevPhase_[ch] = true;
