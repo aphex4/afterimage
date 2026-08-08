@@ -32,11 +32,11 @@ constexpr float kEraseMinStatBias = 1.5f;
 
 // Merge
 constexpr float kMergeDbEpsilon = 1.0e-8f;
-constexpr float kMergeCurrentProfileMs = 70.0f;
 constexpr float kMergeEnvBaseOctaves = 0.5f;
 constexpr float kMergeEnvMaxOctaves = 2.0f;
 constexpr float kMergeSoftMatchAmount = 0.15f;
 constexpr float kMergeMaxResidualDb = 12.0f;
+constexpr float kMergeDetailKeepScale = 0.4f;
 
 #if defined (AFTERIMAGE_DEBUG_AUDITION)
 constexpr DebugAudition kDebugAudition = static_cast<DebugAudition> (AFTERIMAGE_DEBUG_AUDITION);
@@ -304,9 +304,7 @@ void SpectralModeProcessor::prepare (int numBins, double sampleRate, int numChan
     eraseMaskScratch_.assign (static_cast<std::size_t> (numBins_), 0.0f);
     eraseMaskSmoothScratch_.assign (static_cast<std::size_t> (numBins_), 0.0f);
     broadEnvScratch_.assign (static_cast<std::size_t> (numBins_), 0.0f);
-    mergeCurEnvScratch_.assign (static_cast<std::size_t> (numBins_), 0.0f);
     mergeHistEnvScratch_.assign (static_cast<std::size_t> (numBins_), 0.0f);
-    mergeCurProfileScratch_.assign (static_cast<std::size_t> (numBins_), 0.0f);
     mergeOutScratch_.assign (static_cast<std::size_t> (numBins_), 0.0f);
     memorySmearedScratch_.assign (static_cast<std::size_t> (numBins_), 0.0f);
 
@@ -341,8 +339,6 @@ void SpectralModeProcessor::prepare (int numBins, double sampleRate, int numChan
         }
     }
 
-    mergeCurrentProfile_.assign (static_cast<std::size_t> (numChannels_),
-                                 std::vector<float> (static_cast<std::size_t> (numBins_), 0.0f));
     mergeMemorySmeared_.assign (static_cast<std::size_t> (numChannels_),
                                 std::vector<float> (static_cast<std::size_t> (numBins_), 0.0f));
     mergeMemoryPrimed_.assign (static_cast<std::size_t> (numChannels_), false);
@@ -377,9 +373,7 @@ void SpectralModeProcessor::reset()
     std::fill (eraseMaskScratch_.begin(), eraseMaskScratch_.end(), 0.0f);
     std::fill (eraseMaskSmoothScratch_.begin(), eraseMaskSmoothScratch_.end(), 0.0f);
     std::fill (broadEnvScratch_.begin(), broadEnvScratch_.end(), 0.0f);
-    std::fill (mergeCurEnvScratch_.begin(), mergeCurEnvScratch_.end(), 0.0f);
     std::fill (mergeHistEnvScratch_.begin(), mergeHistEnvScratch_.end(), 0.0f);
-    std::fill (mergeCurProfileScratch_.begin(), mergeCurProfileScratch_.end(), 0.0f);
     std::fill (mergeOutScratch_.begin(), mergeOutScratch_.end(), 0.0f);
     std::fill (memorySmearedScratch_.begin(), memorySmearedScratch_.end(), 0.0f);
     std::fill (energyScaleSmoothed_.begin(), energyScaleSmoothed_.end(), 1.0f);
@@ -389,8 +383,6 @@ void SpectralModeProcessor::reset()
     std::fill (eraseFamiliarityFrozen_.begin(), eraseFamiliarityFrozen_.end(), false);
     std::fill (mergeMemoryPrimed_.begin(), mergeMemoryPrimed_.end(), false);
 
-    for (auto& m : mergeCurrentProfile_)
-        std::fill (m.begin(), m.end(), 0.0f);
     for (auto& m : mergeMemorySmeared_)
         std::fill (m.begin(), m.end(), 0.0f);
 
@@ -982,8 +974,9 @@ void SpectralModeProcessor::applyMergePath (float* magnitudes,
     juce::ignoreUnused (kDebugAudition);
 #endif
 
-    // B1: full-spectrum log-domain morph (not envelope-only).
+    // B1: full-spectrum log-domain morph; B3: keep some input fine structure at partial morph.
     const float morphAmount = juce::jlimit (0.0f, 1.0f, mixAmount);
+    const float detailKeep = (1.0f - morphAmount) * (1.0f - blur);
     constexpr float kOutDbFloor = -120.0f;
 
     double energyIn = 0.0;
@@ -996,9 +989,12 @@ void SpectralModeProcessor::applyMergePath (float* magnitudes,
 
         const float curDb = constants::gainToDb (cur + kMergeDbEpsilon);
         const float memDb = constants::gainToDb (mem + kMergeDbEpsilon);
-        const float outDb = std::max (kOutDbFloor, curDb + (memDb - curDb) * morphAmount);
+        const float outDb = curDb + (memDb - curDb) * morphAmount;
+        // Blend a fraction of the current frame's detail back at partial morph.
+        const float finalDb = std::max (kOutDbFloor,
+                                        outDb + (curDb - outDb) * detailKeep * kMergeDetailKeepScale);
 
-        float out = constants::dbToGain (outDb);
+        float out = constants::dbToGain (finalDb);
 
 #if defined (AFTERIMAGE_DEBUG_AUDITION)
         if (kDebugAudition == DebugAudition::MergeDifferenceOnly)
@@ -1010,7 +1006,7 @@ void SpectralModeProcessor::applyMergePath (float* magnitudes,
         energyOut += static_cast<double> (out) * static_cast<double> (out);
     }
 
-    // Soft cap residual loudness vs input (no pull-to-unity — that undoes morph contour).
+    // B4: soft residual loudness cap only — do not pull morph contour to input.
     if (energyIn > static_cast<double> (kEnergyEpsilon)
         && energyOut > static_cast<double> (kEnergyEpsilon))
     {

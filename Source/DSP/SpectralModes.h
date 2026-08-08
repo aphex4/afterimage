@@ -297,11 +297,9 @@ private:
     std::vector<float> eraseMaskScratch_;
     std::vector<float> eraseMaskSmoothScratch_;
     std::vector<float> broadEnvScratch_;
-    std::vector<float> mergeCurEnvScratch_;       // dead after B1 — removed in B5
-    std::vector<float> mergeHistEnvScratch_;      // CQ-smoothed smeared memory
-    std::vector<float> mergeCurProfileScratch_;   // dead after B1 — removed in B5
+    std::vector<float> mergeHistEnvScratch_;  // CQ-smoothed smeared memory
     std::vector<float> mergeOutScratch_;
-    std::vector<float> memorySmearedScratch_;     // EMA output before CQ smooth
+    std::vector<float> memorySmearedScratch_; // EMA output before CQ smooth
 
     std::vector<float> energyScaleSmoothed_; // diagnostic alias of ceilingScale_
     std::vector<float> runningPeak_;
@@ -320,9 +318,6 @@ private:
     std::vector<bool> eraseFamiliarityFrozen_;
     // Legacy accessor backing (exposes famPow as "familiarity" envelope for viz/tests)
     std::vector<std::vector<float>> eraseFamiliarity_;
-
-    // Short current-profile EMA for Merge (40–100 ms) — removed after B5
-    std::vector<std::vector<float>> mergeCurrentProfile_;
 
     // Temporally smeared memory spectrum for Merge (Memory Length × 0.35)
     std::vector<std::vector<float>> mergeMemorySmeared_;
