@@ -213,6 +213,10 @@ private:
 
     void diffuseMagnitudes (const float* input, float* output, int numBins, float blur01) noexcept;
 
+    [[nodiscard]] float computeTransientDuck (const ModeParams& params,
+                                              int channelIndex,
+                                              bool updateSmoothers) noexcept;
+
     [[nodiscard]] float computeMixAmount (SpectralMode mode,
                                           const ModeParams& params,
                                           int channelIndex,
@@ -303,10 +307,18 @@ private:
     std::vector<float> ceilingScale_;
     std::vector<float> transientSmoothed_;
 
-    // Per-channel Erase familiarity + mask temporal smooth
-    std::vector<std::vector<float>> eraseFamiliarity_;
-    std::vector<std::vector<float>> eraseMaskSmoothed_;
+    // Per-channel Erase: min-statistics famPow + decision-directed gain state
+    static constexpr int kEraseMinStatSubs = 8;
+    std::vector<std::vector<float>> eraseFamPow_;
+    std::vector<std::vector<float>> erasePrevGain_;
+    std::vector<std::vector<float>> erasePrevPow_;
+    std::vector<std::vector<std::vector<float>>> eraseMinRing_; // [ch][sub][bin]
+    std::vector<int> eraseMinWriteSub_;
+    std::vector<int> eraseMinHopsInSub_;
+    int eraseHopsPerSub_ = 1;
     std::vector<bool> eraseFamiliarityFrozen_;
+    // Legacy accessor backing (exposes famPow as "familiarity" envelope for viz/tests)
+    std::vector<std::vector<float>> eraseFamiliarity_;
 
     // Short current-profile EMA for Merge (40–100 ms)
     std::vector<std::vector<float>> mergeCurrentProfile_;
