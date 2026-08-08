@@ -11,7 +11,7 @@ namespace afterimage
 struct SpectralTailParams
 {
     float rt60Seconds  = 3.0f;   // from Forget × Memory Length
-    float hfDampRatio  = 0.35f;  // HF rt60 as a fraction of LF rt60
+    float hfDampRatio  = 0.22f;  // HF rt60 as a fraction of LF rt60
     float injectGain   = 1.0f;   // from Influence, ducked by transients
     float diffusion    = 0.0f;   // from Blur: 0 = tonal, 1 = fully random phase
     float shimmerCents = 0.0f;   // slow random detune of ghost phase advance
