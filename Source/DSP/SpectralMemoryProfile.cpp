@@ -96,22 +96,25 @@ void SpectralMemoryProfile::finalize (bool applyStability, float varianceScale) 
             continue;
         }
 
-        const float mean = weightedSum_[i] / w;
+        // Power-domain mean preserves energy and keeps moving partials defined.
+        const float mean = std::sqrt (std::max (0.0f, weightedSumSq_[i] / w));
         float stab = 1.0f;
 
         if (applyStability)
         {
-            // Var = E[x²] - mean² (weighted)
+            // Var of linear magnitude — used as a hint only (Erase familiarity).
+            const float linearMean = weightedSum_[i] / w;
             const float second = weightedSumSq_[i] / w;
-            const float var = std::max (0.0f, second - mean * mean);
-            const float norm = mean * mean + 1.0e-12f;
+            const float var = std::max (0.0f, second - linearMean * linearMean);
+            const float norm = linearMean * linearMean + 1.0e-12f;
             const float normalizedVar = var / norm;
             stab = 1.0f / (1.0f + vScale * normalizedVar);
             stab = juce::jlimit (0.15f, 1.0f, stab);
         }
 
         stability_[i] = stab;
-        magnitudes_[i] = std::max (0.0f, mean * stab);
+        // Do not attenuate magnitudes by stability — that double-penalized melodic bins.
+        magnitudes_[i] = std::max (0.0f, mean);
         if (! std::isfinite (magnitudes_[i]))
             magnitudes_[i] = 0.0f;
     }
