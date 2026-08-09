@@ -1,8 +1,9 @@
 #pragma once
 
+#include "Biquad.h"
 #include "../Utilities/Constants.h"
 
-#include <juce_dsp/juce_dsp.h>
+#include <juce_audio_basics/juce_audio_basics.h>
 
 #include <array>
 #include <cmath>
@@ -15,48 +16,45 @@ namespace afterimage
     morph between low ("oo") and high ("ee") vowel-like positions.
 
     Parameter: 0 = Low formant, 0.5 = neutral, 1 = High formant.
-    Sonic quality: musical tilt / vowel colour — not a research-grade shifter.
+    RT-safe: stack BiquadCoeffs only (no JUCE IIR::Coefficients heap).
 */
 class FormantShifter
 {
 public:
-    void prepare (double sampleRate, int maxBlock, int numChannels)
+    void prepare (double sampleRate, int /*maxBlock*/, int numChannels)
     {
         sampleRate_ = std::max (1.0, sampleRate);
-        juce::dsp::ProcessSpec spec {
-            sampleRate_,
-            (juce::uint32) juce::jmax (1, maxBlock),
-            (juce::uint32) juce::jmax (1, numChannels)
-        };
-
-        for (auto& band : filters_)
-            for (auto& f : band)
-            {
-                f.prepare (spec);
-                f.reset();
-            }
-
+        numChannels_ = juce::jmax (1, juce::jmin (2, numChannels));
         amountSmoothed_ = 0.5f;
+        enabled_ = false;
         updateFilters (0.5f);
+        reset();
     }
 
     void reset() noexcept
     {
-        for (auto& band : filters_)
-            for (auto& f : band)
-                f.reset();
+        for (auto& band : states_)
+            for (auto& s : band)
+                s.reset();
         amountSmoothed_ = 0.5f;
     }
+
+    void setEnabled (bool on) noexcept { enabled_ = on; }
 
     void setAmount (float amount01) noexcept
     {
         target_ = juce::jlimit (0.0f, 1.0f, amount01);
     }
 
+    [[nodiscard]] bool isEnabled() const noexcept { return enabled_; }
+
     void process (juce::AudioBuffer<float>& buffer) noexcept
     {
+        if (! enabled_)
+            return;
+
         const int numSamples = buffer.getNumSamples();
-        const int chans = juce::jmin (buffer.getNumChannels(), 2);
+        const int chans = juce::jmin (buffer.getNumChannels(), numChannels_);
         const float coeff = 1.0f - std::exp (-1.0f / (float) (sampleRate_ * (double) constants::formantSmoothSec));
 
         for (int i = 0; i < numSamples; ++i)
@@ -65,16 +63,28 @@ public:
             if ((i & 63) == 0)
                 updateFilters (amountSmoothed_);
 
-            // Near centre: mostly dry (subtle)
-            const float depth = std::abs (amountSmoothed_ - 0.5f) * 2.0f; // 0..1
+            const float depth = std::abs (amountSmoothed_ - 0.5f) * 2.0f;
             const float wet = depth * 0.85f;
+            if (wet < 1.0e-5f)
+            {
+                // Keep filter state warm near centre without altering audio.
+                for (int ch = 0; ch < chans; ++ch)
+                {
+                    float x = buffer.getSample (ch, i);
+                    for (int b = 0; b < 3; ++b)
+                        (void) states_[static_cast<size_t> (b)][static_cast<size_t> (ch)]
+                                   .process (x, coeffs_[static_cast<size_t> (b)]);
+                }
+                continue;
+            }
 
             for (int ch = 0; ch < chans; ++ch)
             {
                 float x = buffer.getSample (ch, i);
                 float y = x;
                 for (int b = 0; b < 3; ++b)
-                    y = filters_[static_cast<size_t> (b)][static_cast<size_t> (ch)].processSample (y);
+                    y = states_[static_cast<size_t> (b)][static_cast<size_t> (ch)]
+                            .process (y, coeffs_[static_cast<size_t> (b)]);
                 buffer.setSample (ch, i, x * (1.0f - wet) + y * wet);
             }
         }
@@ -83,31 +93,30 @@ public:
 private:
     void updateFilters (float amount01) noexcept
     {
-        // Low formant (oo-ish) → High formant (ee-ish)
         const float t = amount01;
-        const float f1 = juce::jmap (t, 280.0f, 350.0f);
-        const float f2 = juce::jmap (t, 650.0f, 2200.0f);
-        const float f3 = juce::jmap (t, 2200.0f, 3000.0f);
-        const float g1 = juce::Decibels::decibelsToGain (juce::jmap (t, 5.0f, 3.0f));
-        const float g2 = juce::Decibels::decibelsToGain (juce::jmap (t, 4.0f, 6.0f));
-        const float g3 = juce::Decibels::decibelsToGain (juce::jmap (t, 2.0f, 5.0f));
-        const float freqs[3] = { f1, f2, f3 };
-        const float gains[3] = { g1, g2, g3 };
+        const float freqs[3] = {
+            juce::jmap (t, 280.0f, 350.0f),
+            juce::jmap (t, 650.0f, 2200.0f),
+            juce::jmap (t, 2200.0f, 3000.0f)
+        };
+        const float gains[3] = {
+            juce::Decibels::decibelsToGain (juce::jmap (t, 5.0f, 3.0f)),
+            juce::Decibels::decibelsToGain (juce::jmap (t, 4.0f, 6.0f)),
+            juce::Decibels::decibelsToGain (juce::jmap (t, 2.0f, 5.0f))
+        };
         const float qs[3] = { 4.5f, 5.0f, 4.0f };
 
         for (int b = 0; b < 3; ++b)
-        {
-            auto coeffs = juce::dsp::IIR::Coefficients<float>::makePeakFilter (
-                sampleRate_, freqs[b], qs[b], gains[b]);
-            for (int ch = 0; ch < 2; ++ch)
-                *filters_[static_cast<size_t> (b)][static_cast<size_t> (ch)].coefficients = *coeffs;
-        }
+            coeffs_[static_cast<size_t> (b)] = makePeak (sampleRate_, freqs[b], qs[b], gains[b]);
     }
 
     double sampleRate_ = 44100.0;
+    int numChannels_ = 2;
+    bool enabled_ = false;
     float target_ = 0.5f;
     float amountSmoothed_ = 0.5f;
-    std::array<std::array<juce::dsp::IIR::Filter<float>, 2>, 3> filters_ {};
+    std::array<BiquadCoeffs, 3> coeffs_ {};
+    std::array<std::array<BiquadState, 2>, 3> states_ {};
 };
 
 } // namespace afterimage

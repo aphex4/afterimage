@@ -14,7 +14,7 @@ Marketing version: **1.0.0-rc.1** (CMake/JUCE VersionCode stays `1.0.0` / `0x100
 
 It does **not** use a normal delay or reverb as the core. It runs an **overlap-add STFT**, stores a circular buffer of **spectral frames**, builds a stabilized **SpectralMemoryProfile** (~200 ms Gaussian window) for recall, and lets the live spectrum interact with that memory.
 
-Modes: **Shadow**, **Erase** (Merge removed from product; legacy sessions → Shadow). Post-chain reverb/formant/de-esser, exclusive Scale Snap / Auto-Tune, 8-band parametric EQ, three editor views (Memory / Scale / EQ), MATCH in global top bar. Factory presets grouped by Shadow / Erase. Stereo Link deferred. Status: **release candidate** — do not claim READY FOR V1.0 without ear audition.
+Modes: **Shadow**, **Erase** (Merge removed from product; legacy sessions → Shadow). Optional HARMONICS (scale-aware sweetener — not Autotune), FX (reverb/formant/de-esser with explicit enables), 8-band stereo-linked parametric EQ, four editor pages (MEMORY | HARMONICS | EQ | FX), MATCH in global top bar. Soft Shadow default = spectral core only. Status: **release candidate** — do not claim READY FOR V1.0 without ear audition. See `docs/CLEANUP_AUDIT.md`.
 
 ---
 
@@ -40,28 +40,21 @@ Current milestone: **1.0.0-rc.1**.
 
 ```
 Input
-  → copy undelayed input (meters / dry delay source)
-  → SpectralEngine / STFTProcessor (in-place wet)
-       per channel, every hop:
-         window → FFT
-         capture SpectralFrame (mag/phase/rms/centroid/flux)
-         READ history / build SpectralMemoryProfile at Recall BEFORE pushing current
-         apply SpectralModeProcessor (Shadow / Erase / Merge)
-         write magnitudes back to FFT (keep current phase; Hermitian mirror)
-         PUSH unmodified analysis frame into history (unless Freeze)
-         IFFT → synthesis window → WOLA
+  → SpectralEngine / STFT (Shadow / Erase; Merge tests-only)
   → delay dry by STFT latency
-  → equal-power dry/wet mix
-  → Gain Match (optional broadband scalar on completed mix vs dry)
-  → smoothed bypass → entitlement dry (if licensing) → output gain
+  → equal-power Mix
+  → HARMONICS (opt) → Formant (opt) → De-esser (opt)
+  → Reverb wet branch (opt): dry ‖ PreEQ→Verb→PostEQ
+  → Parametric EQ (opt)
+  → Gain Match → Bypass → entitlement dry → Output Gain
   → Output
 ```
 
 ### STFT constants (`Source/Utilities/Constants.h`)
 
-- `fftSize = 2048`, `hopSize = 512` (4× overlap), Hann analysis **and** synthesis  
-- WOLA scale measured from Σ window² (same approach as author’s CircleEQ plugin)  
-- Host latency = **`fftSize` (2048 samples)**  
+- `fftSize = 4096`, `hopSize = 512` (8× overlap), Hann analysis **and** synthesis  
+- WOLA scale measured from Σ window²  
+- Host latency = **`fftSize` (4096 samples)**  
 - Dry delayed by same amount to avoid comb filtering on Mix  
 
 ### Spectral frame

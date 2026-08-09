@@ -19,12 +19,11 @@ enum class ReverbType
 };
 
 /**
-    Conventional algorithmic reverb (JUCE dsp::Reverb) with Pre/Post 4-band EQ
-    and lock-free spectrum probes for the UI.
+    Conventional algorithmic reverb (JUCE dsp::Reverb) with Pre/Post 4-band EQ.
 
-    Routing: Pre-EQ → Reverb (wet path) → Post-EQ, blended with Pre-EQ dry via reverbWet.
-    Place after Mix / Formant / De-esser and before Gain Match.
-    Quality: solid conventional verb — not a flagship algorithmic design.
+    Routing: dry ‖ (Pre-EQ → Verb → Post-EQ) → wet mix.
+    wet≈0 (and settling) is bit-identical pass-through of the input.
+    Pre-EQ never colors the dry path.
 */
 class PostChainReverb
 {
@@ -49,7 +48,10 @@ public:
         postProbe_.prepare (sampleRate_, maxBlock_);
 
         dryScratch_.setSize (numChannels_, maxBlock_, false, true, true);
+        wetScratch_.setSize (numChannels_, maxBlock_, false, true, true);
         wetAmount_ = 0.0f;
+        wetTarget_ = 0.0f;
+        enabled_ = false;
         applyType (ReverbType::Hall);
     }
 
@@ -62,6 +64,9 @@ public:
         postProbe_.reset();
         wetAmount_ = 0.0f;
     }
+
+    void setEnabled (bool on) noexcept { enabled_ = on; }
+    [[nodiscard]] bool isEnabled() const noexcept { return enabled_; }
 
     void setType (ReverbType type) noexcept
     {
@@ -98,47 +103,66 @@ public:
         if (numSamples <= 0 || chans <= 0)
             return;
 
-        // Pre-EQ on the full signal
-        preEq_.process (buffer);
-
+        if (! enabled_ && wetAmount_ < 1.0e-5f)
         {
-            const float* l = buffer.getReadPointer (0);
-            const float* r = chans > 1 ? buffer.getReadPointer (1) : nullptr;
-            preProbe_.process (l, r, numSamples);
+            wetAmount_ = 0.0f;
+            return;
         }
 
-        // Copy dry (post Pre-EQ) for wet blend
+        const float coeff = 1.0f - std::exp (-1.0f / (float) (sampleRate_ * (double) constants::reverbWetSmoothSec));
+
+        // Fast identity when disabled or fully dry and settled.
+        const float target = enabled_ ? wetTarget_ : 0.0f;
+        if (! enabled_ || (target < 1.0e-5f && wetAmount_ < 1.0e-5f))
+        {
+            wetAmount_ = 0.0f;
+            return;
+        }
+
+        // Preserve true dry (pre any EQ).
         for (int ch = 0; ch < chans; ++ch)
             dryScratch_.copyFrom (ch, 0, buffer, ch, 0, numSamples);
 
-        // JUCE reverb: feed as fully wet internally; we own dry/wet
+        // Wet branch: Pre-EQ → Reverb → Post-EQ
+        for (int ch = 0; ch < chans; ++ch)
+            wetScratch_.copyFrom (ch, 0, buffer, ch, 0, numSamples);
+
+        preEq_.process (wetScratch_);
+
+        {
+            const float* l = wetScratch_.getReadPointer (0);
+            const float* r = chans > 1 ? wetScratch_.getReadPointer (1) : nullptr;
+            preProbe_.process (l, r, numSamples);
+        }
+
         juce::dsp::Reverb::Parameters rp = baseParams_;
         rp.dryLevel = 0.0f;
         rp.wetLevel = 1.0f;
         reverb_.setParameters (rp);
 
-        juce::dsp::AudioBlock<float> block (buffer);
-        juce::dsp::ProcessContextReplacing<float> ctx (block);
-        reverb_.process (ctx);
+        {
+            juce::dsp::AudioBlock<float> block (wetScratch_);
+            juce::dsp::ProcessContextReplacing<float> ctx (block);
+            reverb_.process (ctx);
+        }
 
-        postEq_.process (buffer);
+        postEq_.process (wetScratch_);
 
         {
-            const float* l = buffer.getReadPointer (0);
-            const float* r = chans > 1 ? buffer.getReadPointer (1) : nullptr;
+            const float* l = wetScratch_.getReadPointer (0);
+            const float* r = chans > 1 ? wetScratch_.getReadPointer (1) : nullptr;
             postProbe_.process (l, r, numSamples);
         }
 
-        const float coeff = 1.0f - std::exp (-1.0f / (float) (sampleRate_ * (double) constants::reverbWetSmoothSec));
         for (int i = 0; i < numSamples; ++i)
         {
-            wetAmount_ += coeff * (wetTarget_ - wetAmount_);
+            wetAmount_ += coeff * (target - wetAmount_);
             const float w = wetAmount_;
             const float d = 1.0f - w;
             for (int ch = 0; ch < chans; ++ch)
             {
                 const float dry = dryScratch_.getSample (ch, i);
-                const float wet = buffer.getSample (ch, i);
+                const float wet = wetScratch_.getSample (ch, i);
                 buffer.setSample (ch, i, dry * d + wet * w);
             }
         }
@@ -176,6 +200,7 @@ private:
     double sampleRate_ = 44100.0;
     int maxBlock_ = 512;
     int numChannels_ = 2;
+    bool enabled_ = false;
     ReverbType type_ = ReverbType::Hall;
     float wetTarget_ = 0.0f;
     float wetAmount_ = 0.0f;
@@ -186,6 +211,7 @@ private:
     SpectrumProbe preProbe_;
     SpectrumProbe postProbe_;
     juce::AudioBuffer<float> dryScratch_;
+    juce::AudioBuffer<float> wetScratch_;
 };
 
 } // namespace afterimage

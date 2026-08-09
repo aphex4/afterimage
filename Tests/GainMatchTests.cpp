@@ -142,6 +142,14 @@ void configureIdentityWet (AfterimageAudioProcessor& p)
     setBool (p, idBypass, false);
     setBool (p, idFreeze, false);
     setParam (p, idRandomRecall, 0.0f);
+    setBool (p, idHarmonicsEnabled, false);
+    setBool (p, idFormantEnabled, false);
+    setBool (p, idDeEsserEnabled, false);
+    setBool (p, idReverbEnabled, false);
+    setBool (p, idEqEnabled, false);
+    setParam (p, idReverbWet, 0.0f);
+    setParam (p, idDeEsser, 0.0f);
+    setParam (p, idFormant, 0.5f);
 }
 
 void testTailLength()
@@ -525,6 +533,106 @@ void testMonoStereoLink()
     }
 }
 
+void testOptionalModulesIdentity()
+{
+    std::cout << "Cleanup: optional modules off = Mix0 dry identity...\n";
+    AfterimageAudioProcessor p;
+    prepareProc (p, 48000.0, 512, 2);
+    configureIdentityWet (p);
+    setParam (p, idMix, 0.0f);
+    setBool (p, idGainMatch, false);
+
+    // Engage module params but keep enables off / wet 0 — must stay dry-aligned.
+    setParam (p, idScaleColor, 1.5f);
+    setParam (p, idFormant, 0.1f);
+    setParam (p, idDeEsser, 0.8f);
+    setParam (p, idReverbWet, 0.5f);
+    setBool (p, idHarmonicsEnabled, false);
+    setBool (p, idFormantEnabled, false);
+    setBool (p, idDeEsserEnabled, false);
+    setBool (p, idReverbEnabled, false);
+
+    const int lat = p.getLatencySamples();
+    CHECK (lat == fftSize);
+
+    // Prime delay lines
+    for (int k = 0; k < 40; ++k)
+    {
+        juce::AudioBuffer<float> warm (2, 512);
+        fillSine (warm, 48000.0, 440.0f, 0.2f, k * 512);
+        processBuffer (p, warm);
+    }
+
+    juce::AudioBuffer<float> buf (2, 2048);
+    fillSine (buf, 48000.0, 440.0f, 0.2f, 0);
+    juce::AudioBuffer<float> dry;
+    dry.makeCopyOf (buf);
+    processBuffer (p, buf);
+
+    double maxErr = 0.0;
+    for (int ch = 0; ch < 2; ++ch)
+        for (int i = lat; i < buf.getNumSamples(); ++i)
+            maxErr = std::max (maxErr,
+                (double) std::abs (buf.getSample (ch, i) - dry.getSample (ch, i - lat)));
+    std::cout << "  Mix0+modules-off maxErr=" << maxErr << " lat=" << lat << "\n";
+    CHECK (maxErr < 1.0e-5);
+}
+
+void testLatencyImpulseMatchesReport()
+{
+    std::cout << "Cleanup: latency impulse peak vs reported...\n";
+    AfterimageAudioProcessor p;
+    prepareProc (p, 48000.0, 512, 1);
+    configureIdentityWet (p);
+    setParam (p, idMix, 1.0f);
+    setParam (p, idInfluence, 0.0f);
+
+    const int lat = p.getLatencySamples();
+    CHECK (lat == fftSize);
+
+    const int total = lat + 4096;
+    juce::AudioBuffer<float> buf (1, total);
+    buf.clear();
+    buf.setSample (0, 0, 1.0f);
+
+    for (int offset = 0; offset < total; offset += 512)
+    {
+        const int n = juce::jmin (512, total - offset);
+        float* ptr = buf.getWritePointer (0) + offset;
+        juce::AudioBuffer<float> view (&ptr, 1, n);
+        processBuffer (p, view);
+    }
+
+    int peakAt = 0;
+    float peak = 0.0f;
+    for (int i = 0; i < total; ++i)
+    {
+        const float a = std::abs (buf.getSample (0, i));
+        if (a > peak)
+        {
+            peak = a;
+            peakAt = i;
+        }
+    }
+    std::cout << "  impulse peakAt=" << peakAt << " reported=" << lat << "\n";
+    CHECK (std::abs (peakAt - lat) <= hopSize);
+}
+
+void testDefaultPresetOptionalModulesOff()
+{
+    std::cout << "Cleanup: Soft Shadow optional modules off...\n";
+    AfterimageAudioProcessor p;
+    prepareProc (p, 48000.0, 512, 2);
+    p.setCurrentProgram (0);
+    auto& apvts = p.getAPVTS();
+    CHECK (apvts.getRawParameterValue (idHarmonicsEnabled)->load() < 0.5f);
+    CHECK (apvts.getRawParameterValue (idFormantEnabled)->load() < 0.5f);
+    CHECK (apvts.getRawParameterValue (idDeEsserEnabled)->load() < 0.5f);
+    CHECK (apvts.getRawParameterValue (idReverbEnabled)->load() < 0.5f);
+    CHECK (apvts.getRawParameterValue (idEqEnabled)->load() < 0.5f);
+    CHECK (apvts.getRawParameterValue (idReverbWet)->load() < 0.01f);
+}
+
 void testCustomProgramReporting()
 {
     std::cout << "GainMatch/Program: custom state reporting...\n";
@@ -570,5 +678,8 @@ void runGainMatchTests()
     testToggle();
     testBypass();
     testMonoStereoLink();
+    testOptionalModulesIdentity();
+    testLatencyImpulseMatchesReport();
+    testDefaultPresetOptionalModulesOff();
     testCustomProgramReporting();
 }

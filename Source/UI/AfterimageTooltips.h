@@ -10,8 +10,18 @@
 */
 namespace afterimage::tooltips
 {
+/** Do not attach to working controls — reserved for truly disabled UI. */
 inline constexpr const char* unavailable =
     "This control is currently unavailable.";
+
+inline constexpr const char* harmonicsColor =
+    "COLOR\n"
+    "How strongly in-key harmonics are accented.\n"
+    "0% is off. Past 100% adds extra in-key resonance.";
+
+inline constexpr const char* harmonicsTransient =
+    "TRANSIENT\n"
+    "Keeps attacks clearer while HARMONICS accents sustained tone.";
 
 inline constexpr const char* afterimage =
     "AFTERIMAGE\n"

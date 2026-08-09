@@ -12,7 +12,7 @@
 #include <memory>
 
 /**
-    Scale Accentuator view: exclusive Scale Snap vs Auto-Tune, shared root/scale.
+    HARMONICS page: scale-aware spectral sweetener (not Autotune).
 */
 class ScalePanel : public juce::Component
 {
@@ -26,37 +26,29 @@ public:
             l.setColour (juce::Label::textColourId, AfterimageLookAndFeel::textPrimary());
             l.setJustificationType (juce::Justification::centredLeft);
         };
-        style (title_, "SCALE ACCENTUATOR");
-        style (snapTitle_, "SCALE SNAP");
-        style (tuneTitle_, "AUTO-TUNE");
+        style (title_, "HARMONICS");
+        style (subtitle_, "Scale-aware spectral sweetener — not pitch correction.");
         addAndMakeVisible (title_);
-        addAndMakeVisible (snapTitle_);
-        addAndMakeVisible (tuneTitle_);
+        addAndMakeVisible (subtitle_);
 
-        pathBox_.addItem ("Off", 1);
-        pathBox_.addItem ("Scale Snap", 2);
-        pathBox_.addItem ("Auto-Tune", 3);
-        pathBox_.setTooltip ("Exclusive pitch path: Off, Scale Snap, or Auto-Tune.");
-        addAndMakeVisible (pathBox_);
+        enableBtn_.setButtonText ("ON");
+        enableBtn_.setClickingTogglesState (true);
+        enableBtn_.setTooltip ("Enable HARMONICS sweetener. Off is exact identity.");
+        addAndMakeVisible (enableBtn_);
 
         rootBox_.addItemList ({ "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" }, 1);
         scaleBox_.addItemList ({ "Major", "Nat. Minor", "Dorian", "Pent Major", "Pent Minor", "Chromatic" }, 1);
-        rootBox_.setTooltip (afterimage::tooltips::unavailable); // replaced below after attach
+        rootBox_.setTooltip ("Scale root / tonic pitch class.");
+        scaleBox_.setTooltip ("Scale type that defines in-key pitch classes.");
         addAndMakeVisible (rootBox_);
         addAndMakeVisible (scaleBox_);
 
         colorKnob_.setNameLabel ("COLOR");
-        colorKnob_.setTooltip ("Scale Snap color / resonance. Past 100% adds in-key resonance.");
+        colorKnob_.setTooltip (afterimage::tooltips::harmonicsColor);
         transKnob_.setNameLabel ("TRANSIENT");
-        transKnob_.setTooltip ("Preserves attacks while Scale Snap reshapes tone.");
-        speedKnob_.setNameLabel ("RETUNE");
-        speedKnob_.setTooltip ("Auto-Tune retune speed. Fast = robotic; slow = natural.");
-        humanKnob_.setNameLabel ("HUMANIZE");
-        humanKnob_.setTooltip ("Lowers Auto-Tune correction on sustained notes.");
+        transKnob_.setTooltip (afterimage::tooltips::harmonicsTransient);
         addAndMakeVisible (colorKnob_);
         addAndMakeVisible (transKnob_);
-        addAndMakeVisible (speedKnob_);
-        addAndMakeVisible (humanKnob_);
 
         midiHint_.setText ("MIDI notes set root / chord pitch-classes in real time.",
                            juce::dontSendNotification);
@@ -67,18 +59,16 @@ public:
 
     void attach (juce::AudioProcessorValueTreeState& apvts)
     {
-        pathAtt_ = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
-            apvts, afterimage::constants::idPitchPath, pathBox_);
+        enableAtt_ = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
+            apvts, afterimage::constants::idHarmonicsEnabled, enableBtn_);
         rootAtt_ = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
             apvts, afterimage::constants::idScaleRoot, rootBox_);
         scaleAtt_ = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
             apvts, afterimage::constants::idScaleType, scaleBox_);
         colorKnob_.attachToParameter (apvts, afterimage::constants::idScaleColor);
         transKnob_.attachToParameter (apvts, afterimage::constants::idScaleTransient);
-        speedKnob_.attachToParameter (apvts, afterimage::constants::idRetuneSpeed);
-        humanKnob_.attachToParameter (apvts, afterimage::constants::idHumanize);
         apvts_ = &apvts;
-        pathBox_.onChange = [this] { refreshEnablement(); };
+        enableBtn_.onClick = [this] { refreshEnablement(); };
         refreshEnablement();
     }
 
@@ -92,67 +82,54 @@ public:
         };
         setTxt (colorKnob_, afterimage::constants::idScaleColor);
         setTxt (transKnob_, afterimage::constants::idScaleTransient);
-        setTxt (speedKnob_, afterimage::constants::idRetuneSpeed);
-        setTxt (humanKnob_, afterimage::constants::idHumanize);
         refreshEnablement();
     }
 
     void paint (juce::Graphics& g) override
     {
-        for (auto& r : panels_)
-            if (! r.isEmpty())
-                AfterimageLookAndFeel::paintGlassDock (g, r.toFloat());
+        if (! panel_.isEmpty())
+            AfterimageLookAndFeel::paintGlassDock (g, panel_.toFloat());
     }
 
     void resized() override
     {
-        auto area = getLocalBounds().reduced (8);
-        title_.setBounds (area.removeFromTop (22));
-        area.removeFromTop (8);
-        auto pathRow = area.removeFromTop (28);
-        pathBox_.setBounds (pathRow.removeFromLeft (160));
-        pathRow.removeFromLeft (12);
-        rootBox_.setBounds (pathRow.removeFromLeft (70));
-        pathRow.removeFromLeft (8);
-        scaleBox_.setBounds (pathRow.removeFromLeft (130));
-
+        auto area = getLocalBounds().reduced (16);
+        title_.setBounds (area.removeFromTop (28));
+        subtitle_.setBounds (area.removeFromTop (20));
         area.removeFromTop (12);
-        const int gap = 12;
-        const int half = (area.getHeight() - gap) / 2;
-        auto snap = area.removeFromTop (half);
-        area.removeFromTop (gap);
-        auto tune = area.removeFromTop (half);
-        panels_ = { snap, tune };
 
-        layoutModule (snap.reduced (12, 10), snapTitle_, colorKnob_, transKnob_);
-        layoutModule (tune.reduced (12, 10), tuneTitle_, speedKnob_, humanKnob_);
-        midiHint_.setBounds (getLocalBounds().removeFromBottom (18).reduced (12, 0));
+        auto pathRow = area.removeFromTop (36);
+        enableBtn_.setBounds (pathRow.removeFromLeft (72).reduced (0, 4));
+        pathRow.removeFromLeft (16);
+        rootBox_.setBounds (pathRow.removeFromLeft (80).reduced (0, 4));
+        pathRow.removeFromLeft (10);
+        scaleBox_.setBounds (pathRow.removeFromLeft (150).reduced (0, 4));
+
+        area.removeFromTop (20);
+        panel_ = area.removeFromTop (juce::jmin (220, area.getHeight() - 24));
+        auto knobs = panel_.reduced (24, 28);
+        const int w = knobs.getWidth() / 2;
+        colorKnob_.setBounds (knobs.removeFromLeft (w).reduced (12));
+        transKnob_.setBounds (knobs.reduced (12));
+        midiHint_.setBounds (getLocalBounds().removeFromBottom (22).reduced (16, 0));
     }
 
 private:
-    void layoutModule (juce::Rectangle<int> r, juce::Label& title, AfterimageKnob& a, AfterimageKnob& b)
-    {
-        title.setBounds (r.removeFromTop (18));
-        const int w = r.getWidth() / 2;
-        a.setBounds (r.removeFromLeft (w).reduced (8));
-        b.setBounds (r.reduced (8));
-    }
-
     void refreshEnablement()
     {
-        const int path = pathBox_.getSelectedItemIndex(); // 0 Off, 1 Snap, 2 Tune
-        const bool snap = (path == 1);
-        const bool tune = (path == 2);
-        colorKnob_.setEnabled (snap);
-        transKnob_.setEnabled (snap);
-        speedKnob_.setEnabled (tune);
-        humanKnob_.setEnabled (tune);
+        const bool on = enableBtn_.getToggleState();
+        rootBox_.setEnabled (on);
+        scaleBox_.setEnabled (on);
+        colorKnob_.setEnabled (on);
+        transKnob_.setEnabled (on);
     }
 
-    juce::Label title_, snapTitle_, tuneTitle_, midiHint_;
-    juce::ComboBox pathBox_, rootBox_, scaleBox_;
-    AfterimageKnob colorKnob_, transKnob_, speedKnob_, humanKnob_;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> pathAtt_, rootAtt_, scaleAtt_;
+    juce::Label title_, subtitle_, midiHint_;
+    juce::ToggleButton enableBtn_;
+    juce::ComboBox rootBox_, scaleBox_;
+    AfterimageKnob colorKnob_, transKnob_;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> enableAtt_;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> rootAtt_, scaleAtt_;
     juce::AudioProcessorValueTreeState* apvts_ = nullptr;
-    std::array<juce::Rectangle<int>, 2> panels_ {};
+    juce::Rectangle<int> panel_;
 };

@@ -1,9 +1,11 @@
 #pragma once
 
+#include "Biquad.h"
 #include "../Utilities/Constants.h"
 
-#include <juce_dsp/juce_dsp.h>
+#include <juce_audio_basics/juce_audio_basics.h>
 
+#include <array>
 #include <cmath>
 
 namespace afterimage
@@ -11,57 +13,50 @@ namespace afterimage
 
 /**
     Simple dynamic HF reduction — intensity knob only.
-    Detects energy above ~6 kHz and ducks a high shelf. RT-safe.
+    Detects energy above ~6 kHz and ducks a high shelf.
+    RT-safe: stack BiquadCoeffs only (no JUCE IIR::Coefficients heap).
 */
 class DeEsser
 {
 public:
-    void prepare (double sampleRate, int maxBlock, int numChannels)
+    void prepare (double sampleRate, int /*maxBlock*/, int numChannels)
     {
         sampleRate_ = std::max (1.0, sampleRate);
-        juce::dsp::ProcessSpec spec {
-            sampleRate_,
-            (juce::uint32) juce::jmax (1, maxBlock),
-            (juce::uint32) juce::jmax (1, numChannels)
-        };
-
-        for (int ch = 0; ch < 2; ++ch)
-        {
-            detector_[static_cast<size_t> (ch)].prepare (spec);
-            detector_[static_cast<size_t> (ch)].reset();
-            shelf_[static_cast<size_t> (ch)].prepare (spec);
-            shelf_[static_cast<size_t> (ch)].reset();
-        }
-
-        auto hp = juce::dsp::IIR::Coefficients<float>::makeHighPass (sampleRate_, 6000.0f, 0.707f);
-        for (int ch = 0; ch < 2; ++ch)
-            *detector_[static_cast<size_t> (ch)].coefficients = *hp;
-
+        numChannels_ = juce::jmax (1, juce::jmin (2, numChannels));
+        detectorCoeffs_ = makeHighPass (sampleRate_, 6000.0f, 0.707f);
         env_ = 0.0f;
         intensitySmoothed_ = 0.0f;
+        enabled_ = false;
         updateShelf (0.0f);
+        reset();
     }
 
     void reset() noexcept
     {
         for (int ch = 0; ch < 2; ++ch)
         {
-            detector_[static_cast<size_t> (ch)].reset();
-            shelf_[static_cast<size_t> (ch)].reset();
+            detectorState_[static_cast<size_t> (ch)].reset();
+            shelfState_[static_cast<size_t> (ch)].reset();
         }
         env_ = 0.0f;
         intensitySmoothed_ = 0.0f;
     }
 
+    void setEnabled (bool on) noexcept { enabled_ = on; }
     void setIntensity (float intensity01) noexcept
     {
         target_ = juce::jlimit (0.0f, 1.0f, intensity01);
     }
 
+    [[nodiscard]] bool isEnabled() const noexcept { return enabled_; }
+
     void process (juce::AudioBuffer<float>& buffer) noexcept
     {
+        if (! enabled_)
+            return;
+
         const int numSamples = buffer.getNumSamples();
-        const int chans = juce::jmin (buffer.getNumChannels(), 2);
+        const int chans = juce::jmin (buffer.getNumChannels(), numChannels_);
         const float smoothCoeff = 1.0f - std::exp (-1.0f / (float) (sampleRate_ * (double) constants::deEsserSmoothSec));
         const float atk = 1.0f - std::exp (-1.0f / (float) (sampleRate_ * 0.003));
         const float rel = 1.0f - std::exp (-1.0f / (float) (sampleRate_ * 0.080));
@@ -72,23 +67,23 @@ public:
 
             if (intensitySmoothed_ < 1.0e-4f)
             {
-                // Still advance detectors lightly to avoid clicks when engaging
                 for (int ch = 0; ch < chans; ++ch)
-                    detector_[static_cast<size_t> (ch)].processSample (buffer.getSample (ch, i));
+                    (void) detectorState_[static_cast<size_t> (ch)]
+                               .process (buffer.getSample (ch, i), detectorCoeffs_);
                 continue;
             }
 
             float det = 0.0f;
             for (int ch = 0; ch < chans; ++ch)
             {
-                const float d = detector_[static_cast<size_t> (ch)].processSample (buffer.getSample (ch, i));
+                const float d = detectorState_[static_cast<size_t> (ch)]
+                                    .process (buffer.getSample (ch, i), detectorCoeffs_);
                 det = juce::jmax (det, std::abs (d));
             }
 
             const float coeff = det > env_ ? atk : rel;
             env_ += coeff * (det - env_);
 
-            // Intensity raises sensitivity and max cut
             const float thresh = juce::jmap (intensitySmoothed_, 0.12f, 0.02f);
             const float maxCutDb = juce::jmap (intensitySmoothed_, 0.0f, 12.0f);
             float grDb = 0.0f;
@@ -104,7 +99,7 @@ public:
             for (int ch = 0; ch < chans; ++ch)
             {
                 float x = buffer.getSample (ch, i);
-                x = shelf_[static_cast<size_t> (ch)].processSample (x);
+                x = shelfState_[static_cast<size_t> (ch)].process (x, shelfCoeffs_);
                 buffer.setSample (ch, i, x);
             }
         }
@@ -113,18 +108,20 @@ public:
 private:
     void updateShelf (float gainDb) noexcept
     {
-        auto coeffs = juce::dsp::IIR::Coefficients<float>::makeHighShelf (
-            sampleRate_, 5500.0f, 0.707f, juce::Decibels::decibelsToGain (gainDb));
-        for (int ch = 0; ch < 2; ++ch)
-            *shelf_[static_cast<size_t> (ch)].coefficients = *coeffs;
+        shelfCoeffs_ = makeHighShelf (sampleRate_, 5500.0f, 0.707f,
+                                      juce::Decibels::decibelsToGain (gainDb));
     }
 
     double sampleRate_ = 44100.0;
+    int numChannels_ = 2;
+    bool enabled_ = false;
     float target_ = 0.0f;
     float intensitySmoothed_ = 0.0f;
     float env_ = 0.0f;
-    std::array<juce::dsp::IIR::Filter<float>, 2> detector_ {};
-    std::array<juce::dsp::IIR::Filter<float>, 2> shelf_ {};
+    BiquadCoeffs detectorCoeffs_ {};
+    BiquadCoeffs shelfCoeffs_ {};
+    std::array<BiquadState, 2> detectorState_ {};
+    std::array<BiquadState, 2> shelfState_ {};
 };
 
 } // namespace afterimage

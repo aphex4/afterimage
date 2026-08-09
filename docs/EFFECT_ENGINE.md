@@ -1,6 +1,6 @@
 # AFTERIMAGE Effect Engine
 
-Preserves STFT (2048/512), latency, phase strategy (current-frame phase by default), parameter IDs, and Influence=0 / Mix=0 / Bypass identity.
+Preserves STFT (**4096**/512), latency, phase strategy (current-frame phase by default), parameter IDs, and Influence=0 / Mix=0 / Bypass identity.
 
 ## Product identities
 
@@ -18,18 +18,21 @@ Input
   → SpectralEngine (STFT + Shadow/Erase)
   → latency-aligned dry delay
   → equal-power Mix
-  → Formant
-  → De-esser
-  → Post Reverb (Pre-EQ → verb → Post-EQ, wet blend)
-  → Pitch path (exclusive): Off | Scale Snap | Auto-Tune
-  → Parametric EQ (8-band; Stereo / LR / MS)
+  → HARMONICS (opt; scale-aware spectral sweetener)
+  → Formant (opt)
+  → De-esser (opt)
+  → Reverb: dry ‖ (Pre-EQ → verb → Post-EQ) → wet mix (opt)
+  → Parametric EQ (opt; 8-band stereo-linked)
   → Gain Match (vs latency-aligned dry)
   → Bypass → entitlement dry → Output Gain
-  → Output  (I/O meters: dry reference vs final audible)
+  → Output
 ```
 
-Editor views: **Memory** (Well + post-chain modules + dock), **Scale** (Snap / Auto-Tune), **EQ**.
-**MATCH** lives in the global top bar on every view.
+Editor pages: **MEMORY | HARMONICS | EQ | FX**. **MATCH** is global.
+
+Optional modules have explicit enables (`harmonicsEnabled`, `formantEnabled`, `deEsserEnabled`, `reverbEnabled`, `eqEnabled`). When disabled (or reverb wet≈0), processing is skipped / identity.
+
+Conventional Autotune is **not** on the shipping path (see `docs/HARMONICS_ENGINE.md`, `docs/CLEANUP_AUDIT.md`).
 
 ## Core principle: memory is a short moment
 
@@ -52,8 +55,6 @@ historyWeight = floor + (1 - floor) * ageWeight
 floors: Shadow 0.22 | Erase 0.15 | Merge 0.25
 ```
 
-Shadow also maps Forget → exponential tap decay time across the multi-age tail.
-
 ## Transient Preserve
 
 ```text
@@ -69,60 +70,23 @@ tail[k] = Σ_t  tapGain[t] * diffuse(profileAtAge[t][k])
 out = current + tail * mixAmount
 ```
 
-- 5 taps from Recall toward older memory
-- Forget → decay seconds (long/short tail)
-- Blur → repeated 3-tap spectral diffusion (+ light age drift)
-- Energy policy: allow up to `mappedInfluence * 3.5 dB` rise
-- Phase: `CurrentPhase` (default). `PropagatedGhostPhase` exists but is OFF until listening proves better.
-- Per-bin contrast limiter softens whistle peaks
-
 ### Erase — relative familiarity map
 
-Per-channel familiarity updated from **relative prominence** (`mag / broadEnvelope`) of the memory profile (unless Freeze):
+Relative-prominence familiarity with asymmetric attack/release; Blur widens the suppression mask.
 
-```text
-attack/release asymmetric one-pole toward soft-compressed relative prominence
-attackSec ≈ clamp(Memory * 0.03, 20–220 ms)
-releaseSec ≈ Memory * (0.45 + 0.55*(1 - Forget²))
-```
+### Merge — legacy / tests only
 
-**Freeze:** holds the familiarity stencil. **Blur:** widens the suppression mask.
+Spectral blur complex-write path retained for unit tests; not selectable in product UI.
 
-```text
-mask = pow(fam * (1 - 0.88 * novelBoost), contrastExp)
-attenDb = -(12 + mappedInf * 18) * mixAmount * mask
-out = current * max(dbToGain(attenDb), softFloor)
-```
+## Debug / stage bypass
 
-### Merge — dual-profile envelope morph
-
-```text
-currentProfile ≈ 40–100 ms EMA of current magnitudes (cold-start snaps)
-memoryProfile  = 150–250 ms stabilized recall profile
-curEnv, histEnv = boxBlur(..., radius = 12 + BlurRadius)
-mergedDb = lerp(curEnvDb, histEnvDb, morphAmount)
-fine = current / curEnv   // damped by Blur
-out = fine * dbToGain(mergedDb)
-```
-
-**Blur** is the signature control (envelope width + fine-structure damp). Soft energy match (~94% toward unity, residual capped ±1.25 dB) so mid Influence does not amp several dB before Gain Match. Current phase only.
-
-## DebugAudition
-
-Compile with `-DAFTERIMAGE_DEBUG_AUDITION=<n>` (not in release UI):
-
-| Value | Mode |
-|------:|------|
-| 0 | Normal |
-| 1 | MemoryOnly |
-| 2 | ShadowTailOnly |
-| 3 | EraseRemovedOnly |
-| 4 | MergeDifferenceOnly |
+- Mode audition: `-DAFTERIMAGE_DEBUG_AUDITION=<n>` (engine-internal).
+- Chain stage bypass: `-DAFTERIMAGE_STAGE_BYPASS=<mask>` bits A–F in `Constants.h` (developer builds).
 
 ## Factory presets
 
-Retuned for the redesign: Spectral Hall, Vocal Afterglow, Memory Delay, Ghost Pad, Frozen Choir, Loop Cleaner, Resonance Memory, Hollow Repeat, Spectral Dust, Melt, Vocal Blur, Past Into Present, Spectral Fog, Memory Wash (+ Soft Shadow default).
+Soft Shadow (program 0) = spectral memory core only (optional modules off). Other presets may enable reverb/formant/de-esser intentionally.
 
 ## Gain Match
 
-Optional broadband loudness trim after equal-power Mix (before Bypass / entitlement / Output Gain) — unchanged from prior release.
+Optional broadband loudness trim after the completed creative chain (before Bypass / entitlement / Output Gain).

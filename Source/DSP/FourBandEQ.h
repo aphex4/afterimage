@@ -1,8 +1,9 @@
 #pragma once
 
+#include "Biquad.h"
 #include "../Utilities/Constants.h"
 
-#include <juce_dsp/juce_dsp.h>
+#include <juce_audio_basics/juce_audio_basics.h>
 
 #include <array>
 #include <cmath>
@@ -13,38 +14,30 @@ namespace afterimage
 /**
     Four peaking bands, stereo-linked, prepare-sized. RT-safe process.
     Band Q is fixed (~0.85) — freq + gain are the user controls.
+    Stack BiquadCoeffs only (no JUCE IIR::Coefficients heap).
 */
 class FourBandEQ
 {
 public:
-    void prepare (double sampleRate, int maxBlock, int numChannels)
+    void prepare (double sampleRate, int /*maxBlock*/, int numChannels)
     {
         sampleRate_ = std::max (1.0, sampleRate);
-        numChannels_ = juce::jmax (1, numChannels);
-        juce::dsp::ProcessSpec spec {
-            sampleRate_,
-            (juce::uint32) juce::jmax (1, maxBlock),
-            (juce::uint32) numChannels_
-        };
+        numChannels_ = juce::jmax (1, juce::jmin (2, numChannels));
 
         for (int b = 0; b < constants::eqBandsPerStage; ++b)
         {
-            for (int ch = 0; ch < 2; ++ch)
-            {
-                filters_[static_cast<size_t> (b)][static_cast<size_t> (ch)].prepare (spec);
-                filters_[static_cast<size_t> (b)][static_cast<size_t> (ch)].reset();
-            }
             freqs_[static_cast<size_t> (b)] = constants::kDefaultEqFreqs[b];
             gainsDb_[static_cast<size_t> (b)] = 0.0f;
             updateBand (b);
         }
+        reset();
     }
 
     void reset() noexcept
     {
-        for (auto& band : filters_)
-            for (auto& f : band)
-                f.reset();
+        for (auto& band : states_)
+            for (auto& s : band)
+                s.reset();
     }
 
     void setBand (int index, float freqHz, float gainDb) noexcept
@@ -64,19 +57,30 @@ public:
         updateBand (index);
     }
 
+    /** True when all band gains are effectively flat. */
+    [[nodiscard]] bool isNeutral() const noexcept
+    {
+        for (int b = 0; b < constants::eqBandsPerStage; ++b)
+            if (std::abs (gainsDb_[static_cast<size_t> (b)]) > 0.05f)
+                return false;
+        return true;
+    }
+
     void process (juce::AudioBuffer<float>& buffer) noexcept
     {
         const int numSamples = buffer.getNumSamples();
-        const int chans = juce::jmin (buffer.getNumChannels(), 2);
+        const int chans = juce::jmin (buffer.getNumChannels(), numChannels_);
 
         for (int ch = 0; ch < chans; ++ch)
         {
             float* data = buffer.getWritePointer (ch);
-            for (int b = 0; b < constants::eqBandsPerStage; ++b)
+            for (int i = 0; i < numSamples; ++i)
             {
-                auto& filter = filters_[static_cast<size_t> (b)][static_cast<size_t> (ch)];
-                for (int i = 0; i < numSamples; ++i)
-                    data[i] = filter.processSample (data[i]);
+                float x = data[i];
+                for (int b = 0; b < constants::eqBandsPerStage; ++b)
+                    x = states_[static_cast<size_t> (b)][static_cast<size_t> (ch)]
+                            .process (x, coeffs_[static_cast<size_t> (b)]);
+                data[i] = x;
             }
         }
     }
@@ -98,19 +102,20 @@ public:
 private:
     void updateBand (int index) noexcept
     {
-        const float f = freqs_[static_cast<size_t> (index)];
-        const float g = gainsDb_[static_cast<size_t> (index)];
         constexpr float q = 0.85f;
-        auto coeffs = juce::dsp::IIR::Coefficients<float>::makePeakFilter (sampleRate_, f, q, juce::Decibels::decibelsToGain (g));
-        for (int ch = 0; ch < 2; ++ch)
-            *filters_[static_cast<size_t> (index)][static_cast<size_t> (ch)].coefficients = *coeffs;
+        coeffs_[static_cast<size_t> (index)] = makePeak (
+            sampleRate_,
+            freqs_[static_cast<size_t> (index)],
+            q,
+            juce::Decibels::decibelsToGain (gainsDb_[static_cast<size_t> (index)]));
     }
 
     double sampleRate_ = 44100.0;
     int numChannels_ = 2;
     std::array<float, constants::eqBandsPerStage> freqs_ {};
     std::array<float, constants::eqBandsPerStage> gainsDb_ {};
-    std::array<std::array<juce::dsp::IIR::Filter<float>, 2>, constants::eqBandsPerStage> filters_ {};
+    std::array<BiquadCoeffs, constants::eqBandsPerStage> coeffs_ {};
+    std::array<std::array<BiquadState, 2>, constants::eqBandsPerStage> states_ {};
 };
 
 } // namespace afterimage

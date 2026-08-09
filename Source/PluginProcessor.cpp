@@ -49,13 +49,19 @@ bool paramsMatchPreset (const juce::AudioProcessorValueTreeState& apvts, int ind
     auto* revWet = apvts.getRawParameterValue (idReverbWet);
     auto* formant = apvts.getRawParameterValue (idFormant);
     auto* deEss = apvts.getRawParameterValue (idDeEsser);
+    auto* harmEn = apvts.getRawParameterValue (idHarmonicsEnabled);
+    auto* formEn = apvts.getRawParameterValue (idFormantEnabled);
+    auto* deEn = apvts.getRawParameterValue (idDeEsserEnabled);
+    auto* revEn = apvts.getRawParameterValue (idReverbEnabled);
+    auto* eqEn = apvts.getRawParameterValue (idEqEnabled);
     if (mode == nullptr || mem == nullptr || recall == nullptr || infl == nullptr
         || forget == nullptr || blur == nullptr || trans == nullptr || freeze == nullptr
         || random == nullptr || outG == nullptr || mix == nullptr || gainMatch == nullptr
-        || revType == nullptr || revWet == nullptr || formant == nullptr || deEss == nullptr)
+        || revType == nullptr || revWet == nullptr || formant == nullptr || deEss == nullptr
+        || harmEn == nullptr || formEn == nullptr || deEn == nullptr || revEn == nullptr
+        || eqEn == nullptr)
         return false;
 
-    // Factory presets always leave Gain Match off; enabling it marks Custom.
     return juce::roundToInt (mode->load()) == pr.mode
         && near (mem->load(), pr.memoryLengthSec, 0.02f)
         && near (recall->load(), pr.recallPosition, 0.002f)
@@ -71,7 +77,12 @@ bool paramsMatchPreset (const juce::AudioProcessorValueTreeState& apvts, int ind
         && juce::roundToInt (revType->load()) == pr.reverbType
         && near (revWet->load(), pr.reverbWet, 0.01f)
         && near (formant->load(), pr.formant, 0.01f)
-        && near (deEss->load(), pr.deEsser, 0.01f);
+        && near (deEss->load(), pr.deEsser, 0.01f)
+        && ((harmEn->load() > 0.5f) == pr.harmonicsEnabled)
+        && ((formEn->load() > 0.5f) == pr.formantEnabled)
+        && ((deEn->load() > 0.5f) == pr.deEsserEnabled)
+        && ((revEn->load() > 0.5f) == pr.reverbEnabled)
+        && (eqEn->load() < 0.5f);
 }
 
 void addEqBandParams (std::vector<std::unique_ptr<juce::RangedAudioParameter>>& params,
@@ -117,14 +128,15 @@ AfterimageAudioProcessor::AfterimageAudioProcessor()
     pReverbWet = bind (idReverbWet);
     pFormant = bind (idFormant);
     pDeEsser = bind (idDeEsser);
-    pPitchPath = bind (idPitchPath);
+    pHarmonicsEnabled = bind (idHarmonicsEnabled);
+    pFormantEnabled = bind (idFormantEnabled);
+    pDeEsserEnabled = bind (idDeEsserEnabled);
+    pReverbEnabled = bind (idReverbEnabled);
+    pEqEnabled = bind (idEqEnabled);
     pScaleRoot = bind (idScaleRoot);
     pScaleType = bind (idScaleType);
     pScaleColor = bind (idScaleColor);
     pScaleTransient = bind (idScaleTransient);
-    pRetuneSpeed = bind (idRetuneSpeed);
-    pHumanize = bind (idHumanize);
-    pEqChannelMode = bind (idEqChannelMode);
 
     for (int b = 0; b < eqBandsPerStage; ++b)
     {
@@ -165,7 +177,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout AfterimageAudioProcessor::cr
 {
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> params;
 
-    // Product modes: Shadow / Erase only. Legacy Merge (index 2) migrated on load → Shadow.
     params.push_back (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { idMode, 1 }, "Mode", juce::StringArray { "Shadow", "Erase" }, 0));
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
@@ -212,6 +223,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout AfterimageAudioProcessor::cr
     params.push_back (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { idGainMatch, 1 }, "Gain Match", false));
 
+    params.push_back (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { idReverbEnabled, 1 }, "Reverb On", false));
     params.push_back (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { idReverbType, 1 }, "Reverb Type",
         juce::StringArray { "Spring", "Hall", "Room" }, 1));
@@ -219,10 +232,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout AfterimageAudioProcessor::cr
         juce::ParameterID { idReverbWet, 1 }, "Reverb Wet",
         juce::NormalisableRange<float> (0.0f, 1.0f, 0.001f), 0.0f,
         juce::AudioParameterFloatAttributes().withStringFromValueFunction (percentText)));
+    params.push_back (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { idFormantEnabled, 1 }, "Formant On", false));
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { idFormant, 1 }, "Formant",
         juce::NormalisableRange<float> (0.0f, 1.0f, 0.001f), 0.5f,
         juce::AudioParameterFloatAttributes().withStringFromValueFunction (formantText)));
+    params.push_back (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { idDeEsserEnabled, 1 }, "De-Esser On", false));
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { idDeEsser, 1 }, "De-Esser",
         juce::NormalisableRange<float> (0.0f, 1.0f, 0.001f), 0.0f,
@@ -234,10 +251,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout AfterimageAudioProcessor::cr
         addEqBandParams (params, kPostEqFreqIds[b], kPostEqGainIds[b], kDefaultEqFreqs[b]);
     }
 
-    // Pitch path: exclusive Off / Scale Snap / Auto-Tune
-    params.push_back (std::make_unique<juce::AudioParameterChoice> (
-        juce::ParameterID { idPitchPath, 1 }, "Pitch Path",
-        juce::StringArray { "Off", "Scale Snap", "Auto-Tune" }, 0));
+    params.push_back (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { idHarmonicsEnabled, 1 }, "Harmonics On", false));
     params.push_back (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { idScaleRoot, 1 }, "Scale Root",
         juce::StringArray { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" }, 0));
@@ -245,58 +260,41 @@ juce::AudioProcessorValueTreeState::ParameterLayout AfterimageAudioProcessor::cr
         juce::ParameterID { idScaleType, 1 }, "Scale Type",
         juce::StringArray { "Major", "Nat. Minor", "Dorian", "Pent Major", "Pent Minor", "Chromatic" }, 0));
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
-        juce::ParameterID { idScaleColor, 1 }, "Scale Color",
+        juce::ParameterID { idScaleColor, 1 }, "Harmonics Color",
         juce::NormalisableRange<float> (0.0f, 2.0f, 0.001f), 0.0f,
         juce::AudioParameterFloatAttributes().withStringFromValueFunction (percentText)));
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
-        juce::ParameterID { idScaleTransient, 1 }, "Scale Transient",
+        juce::ParameterID { idScaleTransient, 1 }, "Harmonics Transient",
         juce::NormalisableRange<float> (0.0f, 1.0f, 0.001f), 0.35f,
         juce::AudioParameterFloatAttributes().withStringFromValueFunction (percentText)));
-    params.push_back (std::make_unique<juce::AudioParameterFloat> (
-        juce::ParameterID { idRetuneSpeed, 1 }, "Retune Speed",
-        juce::NormalisableRange<float> (0.0f, 1.0f, 0.001f), 0.45f,
-        juce::AudioParameterFloatAttributes().withStringFromValueFunction (percentText)));
-    params.push_back (std::make_unique<juce::AudioParameterFloat> (
-        juce::ParameterID { idHumanize, 1 }, "Humanize",
-        juce::NormalisableRange<float> (0.0f, 1.0f, 0.001f), 0.25f,
-        juce::AudioParameterFloatAttributes().withStringFromValueFunction (percentText)));
 
-    params.push_back (std::make_unique<juce::AudioParameterChoice> (
-        juce::ParameterID { idEqChannelMode, 1 }, "EQ Mode",
-        juce::StringArray { "Stereo", "Left/Right", "Mid/Side" }, 0));
+    params.push_back (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { idEqEnabled, 1 }, "EQ On", false));
 
     for (int b = 0; b < parametricEqBands; ++b)
     {
         const auto n = juce::String (b + 1);
-        const auto idOn = "eq" + n + "On";
-        const auto idType = "eq" + n + "Type";
-        const auto idFreq = "eq" + n + "Freq";
-        const auto idGain = "eq" + n + "Gain";
-        const auto idQ = "eq" + n + "Q";
-        const auto idX4 = "eq" + n + "X4";
-        const auto idSolo = "eq" + n + "Solo";
-
         params.push_back (std::make_unique<juce::AudioParameterBool> (
-            juce::ParameterID { idOn, 1 }, "EQ" + n + " On", false));
+            juce::ParameterID { "eq" + n + "On", 1 }, "EQ" + n + " On", false));
         params.push_back (std::make_unique<juce::AudioParameterChoice> (
-            juce::ParameterID { idType, 1 }, "EQ" + n + " Type",
+            juce::ParameterID { "eq" + n + "Type", 1 }, "EQ" + n + " Type",
             juce::StringArray { "Low Pass", "High Pass", "Low Shelf", "High Shelf", "Bell", "Notch" }, 4));
         params.push_back (std::make_unique<juce::AudioParameterFloat> (
-            juce::ParameterID { idFreq, 1 }, "EQ" + n + " Freq",
+            juce::ParameterID { "eq" + n + "Freq", 1 }, "EQ" + n + " Freq",
             juce::NormalisableRange<float> (20.0f, 20000.0f, 0.1f, 0.35f),
             kDefaultParaEqFreqs[b],
             juce::AudioParameterFloatAttributes().withStringFromValueFunction (hzText)));
         params.push_back (std::make_unique<juce::AudioParameterFloat> (
-            juce::ParameterID { idGain, 1 }, "EQ" + n + " Gain",
+            juce::ParameterID { "eq" + n + "Gain", 1 }, "EQ" + n + " Gain",
             juce::NormalisableRange<float> (-24.0f, 24.0f, 0.1f), 0.0f,
             juce::AudioParameterFloatAttributes().withStringFromValueFunction (dbText)));
         params.push_back (std::make_unique<juce::AudioParameterFloat> (
-            juce::ParameterID { idQ, 1 }, "EQ" + n + " Q",
+            juce::ParameterID { "eq" + n + "Q", 1 }, "EQ" + n + " Q",
             juce::NormalisableRange<float> (0.1f, 20.0f, 0.01f, 0.4f), 0.7f));
         params.push_back (std::make_unique<juce::AudioParameterBool> (
-            juce::ParameterID { idX4, 1 }, "EQ" + n + " x4", false));
+            juce::ParameterID { "eq" + n + "X4", 1 }, "EQ" + n + " x4", false));
         params.push_back (std::make_unique<juce::AudioParameterBool> (
-            juce::ParameterID { idSolo, 1 }, "EQ" + n + " Solo", false));
+            juce::ParameterID { "eq" + n + "Solo", 1 }, "EQ" + n + " Solo", false));
     }
 
     return { params.begin(), params.end() };
@@ -308,8 +306,7 @@ void AfterimageAudioProcessor::resetAdaptiveProcessingState() noexcept
     formant_.reset();
     deEsser_.reset();
     postReverb_.reset();
-    scaleAccent_.reset();
-    autoTune_.reset();
+    harmonics_.reset();
     parametricEq_.reset();
     smoothers.gainMatchAmount.setCurrentAndTargetValue (
         pGainMatch != nullptr && pGainMatch->load() > 0.5f ? 1.0f : 0.0f);
@@ -326,8 +323,7 @@ void AfterimageAudioProcessor::prepareToPlay (double sampleRate, int samplesPerB
     formant_.prepare (sampleRate, maxChunk_, maxChannels_);
     deEsser_.prepare (sampleRate, maxChunk_, maxChannels_);
     postReverb_.prepare (sampleRate, maxChunk_, maxChannels_);
-    scaleAccent_.prepare (sampleRate, maxChunk_, maxChannels_);
-    autoTune_.prepare (sampleRate, maxChunk_, maxChannels_);
+    harmonics_.prepare (sampleRate, maxChunk_, maxChannels_);
     parametricEq_.prepare (sampleRate, maxChunk_, maxChannels_);
 
     const int latency = engine.getLatencySamples();
@@ -394,6 +390,18 @@ void AfterimageAudioProcessor::updateParameterTargets()
                                         pRandomRecall->load(),
                                         pFreeze->load() > 0.5f);
 
+    const bool revOn = pReverbEnabled->load() > 0.5f;
+    const bool formOn = pFormantEnabled->load() > 0.5f;
+    const bool deOn = pDeEsserEnabled->load() > 0.5f;
+    const bool harmOn = pHarmonicsEnabled->load() > 0.5f;
+    const bool eqOn = pEqEnabled->load() > 0.5f;
+
+    postReverb_.setEnabled (revOn);
+    formant_.setEnabled (formOn);
+    deEsser_.setEnabled (deOn);
+    harmonics_.setEnabled (harmOn);
+    parametricEq_.setMasterEnabled (eqOn);
+
     const int revIdx = juce::roundToInt (pReverbType->load());
     postReverb_.setType (revIdx == 0 ? afterimage::ReverbType::Spring
                         : (revIdx == 2 ? afterimage::ReverbType::Room
@@ -414,13 +422,10 @@ void AfterimageAudioProcessor::updateParameterTargets()
     const auto scaleType = static_cast<afterimage::ScaleType> (
         juce::jlimit (0, (int) afterimage::ScaleType::NumTypes - 1, juce::roundToInt (pScaleType->load())));
     const auto midiMask = midiScaleMask_.load (std::memory_order_relaxed);
-    scaleAccent_.setParams (root, scaleType, pScaleColor->load(), pScaleTransient->load(), midiMask);
-    autoTune_.setParams (root, scaleType, pRetuneSpeed->load(), pHumanize->load(), midiMask);
+    harmonics_.setParams (root, scaleType, pScaleColor->load(), pScaleTransient->load(), midiMask);
 
-    const int eqMode = juce::roundToInt (pEqChannelMode->load());
-    parametricEq_.setChannelMode (eqMode == 1 ? afterimage::EqChannelMode::LeftRight
-                                 : (eqMode == 2 ? afterimage::EqChannelMode::MidSide
-                                                : afterimage::EqChannelMode::Stereo));
+    int soloCount = 0;
+    int firstSolo = -1;
     for (int b = 0; b < parametricEqBands; ++b)
     {
         afterimage::EqBandParams bp;
@@ -432,8 +437,28 @@ void AfterimageAudioProcessor::updateParameterTargets()
         bp.gainDb = pEqGain[static_cast<size_t> (b)]->load();
         bp.q = pEqQ[static_cast<size_t> (b)]->load();
         bp.x4 = pEqX4[static_cast<size_t> (b)]->load() > 0.5f;
-        bp.solo = pEqSolo[static_cast<size_t> (b)]->load() > 0.5f;
+        const bool wantSolo = pEqSolo[static_cast<size_t> (b)]->load() > 0.5f;
+        if (wantSolo)
+        {
+            if (firstSolo < 0)
+                firstSolo = b;
+            ++soloCount;
+        }
+        bp.solo = wantSolo && b == firstSolo;
         parametricEq_.setBand (b, bp);
+    }
+
+    // Enforce exclusive solo in APVTS when multiple are true (UI may race).
+    if (soloCount > 1 && firstSolo >= 0)
+    {
+        for (int b = 0; b < parametricEqBands; ++b)
+        {
+            if (b == firstSolo)
+                continue;
+            if (auto* p = apvts.getParameter ("eq" + juce::String (b + 1) + "Solo"))
+                if (p->getValue() > 0.5f)
+                    p->setValueNotifyingHost (0.0f);
+        }
     }
 }
 
@@ -445,6 +470,7 @@ void AfterimageAudioProcessor::processChunk (juce::AudioBuffer<float>& wetChunk,
     const int numChannels = wetChunk.getNumChannels();
     auto& viz = engine.getVisualization();
     constexpr float rise = 0.6f, fall = 0.92f;
+    constexpr int bypass = afterimage::constants::stageBypassMask;
 
 #if defined (AFTERIMAGE_ENABLE_LICENSING)
     const bool dryOnly = licenseManager_.getEntitlement()
@@ -452,16 +478,17 @@ void AfterimageAudioProcessor::processChunk (juce::AudioBuffer<float>& wetChunk,
     entitlementDryAmount_.setTargetValue (dryOnly ? 1.0f : 0.0f);
 #endif
 
-    // Wet: identity STFT + history capture
-    engine.process (wetChunk);
+    if ((bypass & afterimage::constants::stageBypassSpectral) == 0)
+        engine.process (wetChunk);
+    // else: leave wet as input copy (identity STFT bypass for regression)
 
-    // Latency-aligned dry
     dryWetMixer.processDryDelay (dryInChunk, delayedDryChunk);
 
-    // Equal-power Mix into wetChunk
+    const bool forceDryMix = (bypass & afterimage::constants::stageBypassMixDry) != 0;
     for (int i = 0; i < numSamples; ++i)
     {
-        const float mix = smoothers.mix.getNextValue();
+        const float mixRaw = smoothers.mix.getNextValue();
+        const float mix = forceDryMix ? 0.0f : mixRaw;
         const float dryGain = std::cos (mix * juce::MathConstants<float>::halfPi);
         const float wetGain = std::sin (mix * juce::MathConstants<float>::halfPi);
 
@@ -473,25 +500,27 @@ void AfterimageAudioProcessor::processChunk (juce::AudioBuffer<float>& wetChunk,
         }
     }
 
-    // Post-chain: Formant → De-esser → Reverb → Pitch path → Parametric EQ → Gain Match
-    formant_.process (wetChunk);
-    deEsser_.process (wetChunk);
-    postReverb_.process (wetChunk);
+    if ((bypass & afterimage::constants::stageBypassHarmonics) == 0)
+        harmonics_.process (wetChunk);
 
-    const int pitchPath = juce::roundToInt (pPitchPath->load());
-    if (pitchPath == 1)
-        scaleAccent_.process (wetChunk);
-    else if (pitchPath == 2)
-        autoTune_.process (wetChunk);
+    if ((bypass & afterimage::constants::stageBypassFx) == 0)
+    {
+        formant_.process (wetChunk);
+        deEsser_.process (wetChunk);
+        postReverb_.process (wetChunk);
+    }
 
-    parametricEq_.process (wetChunk);
+    if ((bypass & afterimage::constants::stageBypassEq) == 0)
+        parametricEq_.process (wetChunk);
 
-    // Gain Match on completed post-FX mix vs latency-aligned dry → bypass → entitlement → out
+    const bool bypassMatch = (bypass & afterimage::constants::stageBypassGainMatch) != 0;
+
     for (int i = 0; i < numSamples; ++i)
     {
-        const float bypass = smoothers.bypassAmount.getNextValue();
+        const float bypassAmt = smoothers.bypassAmount.getNextValue();
         const float gain = smoothers.outputGain.getNextValue();
-        const float matchAmt = smoothers.gainMatchAmount.getNextValue();
+        const float matchRaw = smoothers.gainMatchAmount.getNextValue();
+        const float matchAmt = bypassMatch ? 0.0f : matchRaw;
 #if defined (AFTERIMAGE_ENABLE_LICENSING)
         const float entitlementDry = entitlementDryAmount_.getNextValue();
 #else
@@ -521,14 +550,13 @@ void AfterimageAudioProcessor::processChunk (juce::AudioBuffer<float>& wetChunk,
         {
             const float dry = delayedDryChunk.getSample (ch, i);
             float out = wetChunk.getSample (ch, i) * scalar;
-            out = out * (1.0f - bypass) + dry * bypass;
+            out = out * (1.0f - bypassAmt) + dry * bypassAmt;
             out = out * (1.0f - entitlementDry) + dry * entitlementDry;
             out *= gain;
             wetChunk.setSample (ch, i, out);
         }
     }
 
-    // Meters: dry reference (latency-aligned) vs final audible output
     float inPeak = 0.0f;
     float outPeak = 0.0f;
     for (int ch = 0; ch < numChannels; ++ch)
@@ -563,7 +591,6 @@ void AfterimageAudioProcessor::handleMidi (const juce::MidiBuffer& midi) noexcep
         mask |= (std::uint16_t) (1u << (n % 12));
         ++held;
     }
-    // Single note → treat as root hint via mask of that PC only; chords → full PC set.
     midiScaleMask_.store (held > 0 ? mask : 0, std::memory_order_relaxed);
 }
 
@@ -666,23 +693,55 @@ void AfterimageAudioProcessor::syncProgramIndexFromParameters() noexcept
 
 void AfterimageAudioProcessor::migrateLegacyParameterTree (juce::ValueTree& tree)
 {
-    // Old sessions: mode choice had 3 entries (Shadow=0, Erase=0.5, Merge=1.0 normalized).
-    // New sessions: Shadow=0, Erase=1.0. Map Merge → Shadow; remap Erase 0.5 → 1.0.
+    float legacyPitchPath = -1.0f;
+
     for (int i = 0; i < tree.getNumChildren(); ++i)
     {
         auto child = tree.getChild (i);
         if (! child.hasType ("PARAM"))
             continue;
-        if (child.getProperty ("id").toString() != idMode)
-            continue;
 
-        const float v = (float) child.getProperty ("value");
-        if (v > 0.75f)
-            child.setProperty ("value", 0.0f, nullptr); // Merge → Shadow
-        else if (v > 0.25f)
-            child.setProperty ("value", 1.0f, nullptr); // Erase mid → Erase
-        // else Shadow stays at ~0
-        break;
+        const auto id = child.getProperty ("id").toString();
+        if (id == idMode)
+        {
+            const float v = (float) child.getProperty ("value");
+            if (v > 0.75f)
+                child.setProperty ("value", 0.0f, nullptr); // Merge → Shadow
+            else if (v > 0.25f)
+                child.setProperty ("value", 1.0f, nullptr); // Erase mid → Erase
+        }
+        else if (id == idPitchPathLegacy)
+        {
+            legacyPitchPath = (float) child.getProperty ("value");
+        }
+    }
+
+    // pitchPath: 0 Off, 1 Scale Snap → harmonics on, 2 Auto-Tune → harmonics off
+    if (legacyPitchPath >= 0.0f)
+    {
+        const int path = juce::roundToInt (legacyPitchPath * 2.0f); // choice normalized roughly
+        // Choice params store normalized 0..1; with 3 items: 0, 0.5, 1.0
+        const bool harmOn = legacyPitchPath > 0.15f && legacyPitchPath < 0.75f;
+        juce::ignoreUnused (path);
+
+        bool found = false;
+        for (int i = 0; i < tree.getNumChildren(); ++i)
+        {
+            auto child = tree.getChild (i);
+            if (child.hasType ("PARAM") && child.getProperty ("id").toString() == idHarmonicsEnabled)
+            {
+                child.setProperty ("value", harmOn ? 1.0f : 0.0f, nullptr);
+                found = true;
+                break;
+            }
+        }
+        if (! found)
+        {
+            juce::ValueTree p ("PARAM");
+            p.setProperty ("id", idHarmonicsEnabled, nullptr);
+            p.setProperty ("value", harmOn ? 1.0f : 0.0f, nullptr);
+            tree.addChild (p, -1, nullptr);
+        }
     }
 }
 

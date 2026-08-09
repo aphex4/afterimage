@@ -5,7 +5,7 @@
 AFTERIMAGE is a real-time spectral memory processor. It continuously analyzes and stores a short history of the signal’s spectral content so the present can interact with its own recent past — producing evolving spectral echoes, ghost harmonics, frequency suppression, and morphing textures.
 
 > **Current milestone: 1.0.0-rc.1 (Release Candidate)**  
-> Not ear-signed-off for final v1.0. Product modes are **Shadow / Erase** (Merge removed; legacy sessions map to Shadow). Post-chain reverb/formant/de-esser, exclusive Scale Snap / Auto-Tune, 8-band parametric EQ, Gain Match, three editor views (Memory / Scale / EQ), Memory Well, licensing, and validation tests.
+> Not ear-signed-off for final v1.0. Product modes are **Shadow / Erase** (Merge removed; legacy sessions map to Shadow). Optional HARMONICS sweetener, FX (reverb/formant/de-esser), 8-band parametric EQ, Gain Match, four editor pages (MEMORY | HARMONICS | EQ | FX). Conventional Autotune is not shipped.
 
 ### Versioning choice
 
@@ -24,11 +24,11 @@ Do **not** claim READY FOR V1.0 without DAW ear A/B.
 - Per-channel spectral history; Freeze captures a stabilized recent memory profile
 - **Shadow** — multi-age spectral tail / ghost from diffused memory profiles
 - **Erase** — relative-prominence familiarity carve (repeated content hollows out)
-- **Post-chain** — Formant, De-esser, conventional Reverb (Spring/Hall/Room + Pre/Post EQ)
-- **Scale view** — exclusive Scale Snap or Auto-Tune (Retune Speed + Humanize); MIDI root/chord
-- **EQ view** — 8-band parametric EQ (last creative stage): Bell/Shelf/Cut/Notch, ×4 slopes, Solo, Stereo/LR/MS
+- **HARMONICS** — optional scale-aware spectral sweetener (not Autotune); MIDI root/chord
+- **FX** — Formant, De-esser, Reverb (Spring/Hall/Room + Pre/Post EQ on wet branch); explicit enables
+- **EQ** — 8-band stereo-linked parametric EQ: Bell/Shelf/Cut/Notch, ×4 slopes, exclusive Solo
 - **Gain Match** — broadband loudness trim of the completed chain vs latency-aligned dry (MATCH in global top bar)
-- Three editor views: **Memory | Scale | EQ**
+- Four editor pages: **MEMORY | HARMONICS | EQ | FX**
 - Factory presets grouped by Shadow / Erase
 - Offline licensing: 14-day trial, signed `.afterimage-license`, compact activation UI
 - Memory Well particle visualization (DSP-seeded)
@@ -44,9 +44,9 @@ Do **not** claim READY FOR V1.0 without DAW ear A/B.
 | Spectral history + SpectralMemoryProfile | Recall window |
 | Modes | Shadow, Erase (see [docs/EFFECT_ENGINE.md](docs/EFFECT_ENGINE.md)) |
 | Mix | Latency-compensated equal-power dry/wet |
-| Formant → De-esser → Reverb | Post-spectral colour / smooth |
-| Pitch path | Off \| Scale Snap \| Auto-Tune (exclusive) |
-| Parametric EQ | 8-band, last creative stage |
+| HARMONICS (opt) | Scale-aware spectral sweetener |
+| Formant → De-esser → Reverb (opt) | Post-spectral colour / space |
+| Parametric EQ (opt) | 8-band stereo-linked |
 | Gain Match → Bypass → Output | Level match + utility |
 
 ---
@@ -181,12 +181,12 @@ CMake options: `AFTERIMAGE_ENABLE_LICENSING` (default ON), `AFTERIMAGE_BUILD_LIC
 
 | Control | Range | Notes |
 |---------|-------|-------|
-| Mode | Shadow / Erase / Merge | All three transform magnitudes |
+| Mode | Shadow / Erase | Spectral memory modes (Merge = legacy/tests only) |
 | Memory | 0.1–10 s | Searchable history window |
 | Recall | 0–100% | Position in history (0 = newest); scrub via Memory Well ring |
 | Influence | 0–100% | Perceptual curve (exact 0/1); mid range more useful |
 | Forget | 0–100% | Age weighting with mode-specific retention floor |
-| Blur | 0–100% | Mode-specific: Shadow diffusion / Erase mask width / Merge envelope |
+| Blur | 0–100% | Mode-specific: Shadow diffusion / Erase mask width |
 | Transients | 0–100% | Attack preservation (max ~65% influence reduction) |
 | Random | 0–100% | Slow smoothed wander around Recall Position |
 | Freeze | on/off | Hold a stabilized recent memory profile |
@@ -195,7 +195,7 @@ CMake options: `AFTERIMAGE_ENABLE_LICENSING` (default ON), `AFTERIMAGE_BUILD_LIC
 | Output | −24…+12 dB | Output gain |
 | Bypass | on/off | Smoothed host-friendly bypass |
 | License | header chip | Trial / licensed / invalid — click to activate |
-| Preset | factory list | Shadow / Erase / Merge sections; parameters only; clears live history |
+| Preset | factory list | Shadow / Erase sections; parameters only; clears live history |
 
 ---
 

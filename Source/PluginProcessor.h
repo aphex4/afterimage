@@ -11,7 +11,6 @@
 #include "DSP/DeEsser.h"
 #include "DSP/PostChainReverb.h"
 #include "DSP/ScaleAccentuator.h"
-#include "DSP/AutoTune.h"
 #include "DSP/ScaleTheory.h"
 #include "DSP/ParametricEQ.h"
 #include "DSP/VisualizationAtomics.h"
@@ -29,18 +28,13 @@
 /**
     AFTERIMAGE spectral memory processor (Shadow / Erase).
 
-    Routing (documented):
-      1) latency-aligned dry + processed wet (identity STFT + spectral modes)
-      2) equal-power dry/wet Mix → mixed
-      3) Formant shifter
-      4) De-esser
-      5) Post-chain Reverb (Pre-EQ → verb → Post-EQ)
-      6) Pitch path (exclusive): Off | Scale Snap | Auto-Tune
-      7) Parametric EQ (8-band, last creative stage)
-      8) Gain Match (broadband scalar vs latency-aligned dry)
-      9) bypass → entitlement dry → Output Gain
+    Routing:
+      INPUT → SPECTRAL MEMORY → latency-aligned dry/wet Mix
+            → HARMONICS (opt) → FORMANT (opt) → DE-ESSER (opt)
+            → REVERB wet branch (opt) → PARAMETRIC EQ (opt)
+            → GAIN MATCH → BYPASS → OUTPUT GAIN → OUTPUT
 
-    Meters: input = latency-aligned dry; output = final audible buffer.
+    Conventional Autotune is not on the shipping path (see docs/CLEANUP_AUDIT.md).
 */
 class AfterimageAudioProcessor : public juce::AudioProcessor
 {
@@ -93,7 +87,6 @@ public:
     float getHistoryFill() const noexcept { return engine.getVisualization().loadHistoryFill(); }
     float getGainMatchCorrectionDb() const noexcept { return gainMatch_.loadDebugCorrectionDb(); }
 
-    /** MIDI-driven pitch-class mask (0 = use APVTS scale only). */
     std::uint16_t getMidiScaleMask() const noexcept
     {
         return midiScaleMask_.load (std::memory_order_relaxed);
@@ -124,8 +117,7 @@ private:
     afterimage::FormantShifter formant_;
     afterimage::DeEsser deEsser_;
     afterimage::PostChainReverb postReverb_;
-    afterimage::ScaleAccentuator scaleAccent_;
-    afterimage::AutoTune autoTune_;
+    afterimage::ScaleAccentuator harmonics_;
     afterimage::ParametricEQ parametricEq_;
 
     juce::AudioBuffer<float> inputScratch;
@@ -154,14 +146,15 @@ private:
     std::atomic<float>* pReverbWet = nullptr;
     std::atomic<float>* pFormant = nullptr;
     std::atomic<float>* pDeEsser = nullptr;
-    std::atomic<float>* pPitchPath = nullptr;
+    std::atomic<float>* pHarmonicsEnabled = nullptr;
+    std::atomic<float>* pFormantEnabled = nullptr;
+    std::atomic<float>* pDeEsserEnabled = nullptr;
+    std::atomic<float>* pReverbEnabled = nullptr;
+    std::atomic<float>* pEqEnabled = nullptr;
     std::atomic<float>* pScaleRoot = nullptr;
     std::atomic<float>* pScaleType = nullptr;
     std::atomic<float>* pScaleColor = nullptr;
     std::atomic<float>* pScaleTransient = nullptr;
-    std::atomic<float>* pRetuneSpeed = nullptr;
-    std::atomic<float>* pHumanize = nullptr;
-    std::atomic<float>* pEqChannelMode = nullptr;
 
     std::array<std::atomic<float>*, afterimage::constants::eqBandsPerStage> pPreEqFreq {};
     std::array<std::atomic<float>*, afterimage::constants::eqBandsPerStage> pPreEqGain {};

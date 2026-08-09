@@ -82,8 +82,9 @@ AfterimageAudioProcessorEditor::AfterimageAudioProcessorEditor (AfterimageAudioP
         addAndMakeVisible (b);
     };
     setupViewBtn (memoryViewBtn, EditorView::Memory);
-    setupViewBtn (scaleViewBtn, EditorView::Scale);
+    setupViewBtn (harmonicsViewBtn, EditorView::Harmonics);
     setupViewBtn (eqViewBtn, EditorView::Eq);
+    setupViewBtn (fxViewBtn, EditorView::Fx);
     memoryViewBtn.setToggleState (true, juce::dontSendNotification);
 
     addAndMakeVisible (modeSelector);
@@ -150,8 +151,9 @@ void AfterimageAudioProcessorEditor::setEditorView (EditorView view)
 {
     editorView_ = view;
     memoryViewBtn.setToggleState (view == EditorView::Memory, juce::dontSendNotification);
-    scaleViewBtn.setToggleState (view == EditorView::Scale, juce::dontSendNotification);
+    harmonicsViewBtn.setToggleState (view == EditorView::Harmonics, juce::dontSendNotification);
     eqViewBtn.setToggleState (view == EditorView::Eq, juce::dontSendNotification);
+    fxViewBtn.setToggleState (view == EditorView::Fx, juce::dontSendNotification);
     refreshViewVisibility();
     resized();
     repaint();
@@ -160,20 +162,18 @@ void AfterimageAudioProcessorEditor::setEditorView (EditorView view)
 void AfterimageAudioProcessorEditor::refreshViewVisibility()
 {
     const bool mem = editorView_ == EditorView::Memory;
-    const bool scale = editorView_ == EditorView::Scale;
+    const bool harm = editorView_ == EditorView::Harmonics;
     const bool eq = editorView_ == EditorView::Eq;
+    const bool fx = editorView_ == EditorView::Fx;
 
     memoryWell.setVisible (mem);
-    postChainPanel.setVisible (mem);
     freezeButton.setVisible (mem);
     for (auto& k : knobs)
         k->setVisible (mem);
 
-    scalePanel.setVisible (scale);
+    scalePanel.setVisible (harm);
     eqPanel.setVisible (eq);
-
-    // Global chrome always visible: title, license, fill, preset, view switch,
-    // SHADOW/ERASE, meters, MATCH, POWER
+    postChainPanel.setVisible (fx);
 }
 
 void AfterimageAudioProcessorEditor::buildPresetMenu()
@@ -268,6 +268,12 @@ void AfterimageAudioProcessorEditor::paint (juce::Graphics& g)
     bounds = getLocalBounds().toFloat();
     g.fillRect (bounds.removeFromRight (20.0f));
 
+    if (! navBarBounds_.isEmpty())
+    {
+        g.setColour (AfterimageLookAndFeel::panelEdge().withAlpha (0.45f));
+        g.fillRoundedRectangle (navBarBounds_, 8.0f);
+    }
+
     if (editorView_ == EditorView::Memory && ! dockBounds_.isEmpty())
         AfterimageLookAndFeel::paintGlassDock (g, dockBounds_);
 
@@ -283,11 +289,12 @@ void AfterimageAudioProcessorEditor::resized()
     const float scale = juce::jlimit (0.85f, 1.15f, (float) W / 1180.0f);
     const int margin = juce::jmax (12, juce::roundToInt (18.0f * scale));
     const int headerH = juce::jmax (44, juce::roundToInt (50.0f * scale));
+    const int navH = juce::jmax (40, juce::roundToInt (48.0f * scale));
     const int dockH = juce::jmax (110, juce::roundToInt (124.0f * scale));
 
     auto area = getLocalBounds().reduced (margin);
 
-    // ---- Global top bar (all views): brand | license | fill | views | preset | modes | meters | MATCH | POWER
+    // Top bar: brand | license | fill | preset | modes | meters | MATCH | POWER
     auto top = area.removeFromTop (headerH);
     const int titleW = juce::jlimit (120, 200, W / 6);
     titleLabel.setBounds (top.removeFromLeft (titleW).reduced (0, juce::roundToInt (6.0f * scale)));
@@ -320,15 +327,19 @@ void AfterimageAudioProcessorEditor::resized()
     modeSelector.setBounds (top.removeFromRight (modeW).reduced (0, juce::roundToInt (10.0f * scale)));
     top.removeFromRight (6);
 
-    presetBox.setBounds (top.removeFromRight (juce::jmin (top.getWidth(), juce::roundToInt (130.0f * scale)))
+    presetBox.setBounds (top.removeFromRight (juce::jmin (top.getWidth(), juce::roundToInt (140.0f * scale)))
                              .reduced (0, juce::roundToInt (12.0f * scale)));
-    top.removeFromRight (6);
 
-    // View switcher MEMORY | SCALE | EQ
-    const int viewW = juce::jmax (64, juce::roundToInt (70.0f * scale));
-    eqViewBtn.setBounds (top.removeFromRight (viewW).reduced (2, juce::roundToInt (10.0f * scale)));
-    scaleViewBtn.setBounds (top.removeFromRight (viewW).reduced (2, juce::roundToInt (10.0f * scale)));
-    memoryViewBtn.setBounds (top.removeFromRight (viewW).reduced (2, juce::roundToInt (10.0f * scale)));
+    // Large nav: MEMORY | HARMONICS | EQ | FX
+    area.removeFromTop (6);
+    auto nav = area.removeFromTop (navH);
+    navBarBounds_ = nav.toFloat();
+    const int tabW = nav.getWidth() / 4;
+    memoryViewBtn.setBounds (nav.removeFromLeft (tabW).reduced (4, 4));
+    harmonicsViewBtn.setBounds (nav.removeFromLeft (tabW).reduced (4, 4));
+    eqViewBtn.setBounds (nav.removeFromLeft (tabW).reduced (4, 4));
+    fxViewBtn.setBounds (nav.reduced (4, 4));
+    area.removeFromTop (10);
 
     dockBounds_ = {};
     dockDividers_ = {};
@@ -344,16 +355,8 @@ void AfterimageAudioProcessorEditor::resized()
         const int sideGap = juce::jmax (14, juce::roundToInt (18.0f * scale));
         auto controlBand = area.removeFromBottom (controlSize + sideGap * 2);
 
-        const int stageGap = juce::jmax (12, juce::roundToInt (14.0f * scale));
-        const int rightW = juce::roundToInt ((float) area.getWidth() * 0.42f);
-        auto rightCol = area.removeFromRight (rightW);
-        area.removeFromRight (stageGap);
-        auto leftCol = area;
-
-        freezeButton.setBounds (controlBand.withWidth (leftCol.getWidth()).withX (leftCol.getX())
-                                    .withSizeKeepingCentre (controlSize, controlSize));
-        memoryWell.setBounds (leftCol);
-        postChainPanel.setBounds (rightCol);
+        freezeButton.setBounds (controlBand.withSizeKeepingCentre (controlSize, controlSize));
+        memoryWell.setBounds (area);
 
         if ((int) knobs.size() == kDockCount)
         {
@@ -376,13 +379,17 @@ void AfterimageAudioProcessorEditor::resized()
             placeGroup (6, 2);
         }
     }
-    else if (editorView_ == EditorView::Scale)
+    else if (editorView_ == EditorView::Harmonics)
     {
         scalePanel.setBounds (area);
     }
-    else
+    else if (editorView_ == EditorView::Eq)
     {
         eqPanel.setBounds (area);
+    }
+    else
+    {
+        postChainPanel.setBounds (area);
     }
 }
 
@@ -404,20 +411,23 @@ void AfterimageAudioProcessorEditor::timerCallback()
                     / (afterimage::constants::memoryLengthMaxSec - afterimage::constants::memoryLengthMinSec));
             memoryWell.setMemoryLengthNorm (norm);
         }
-        postChainPanel.updateMeters (audioProcessor.getPostReverb().getPreProbe(),
-                                     audioProcessor.getPostReverb().getPostProbe());
-        postChainPanel.refreshValueText();
     }
-    else if (editorView_ == EditorView::Scale)
+    else if (editorView_ == EditorView::Harmonics)
     {
         scalePanel.refreshValueText();
     }
-    else
+    else if (editorView_ == EditorView::Eq)
     {
         float bins[afterimage::SpectrumProbe::kBins];
         audioProcessor.getParametricEQ().getProbe().copyBins (bins, afterimage::SpectrumProbe::kBins);
         eqPanel.setSpectrumBins (bins, afterimage::SpectrumProbe::kBins);
         eqPanel.refreshValueText();
+    }
+    else
+    {
+        postChainPanel.updateMeters (audioProcessor.getPostReverb().getPreProbe(),
+                                     audioProcessor.getPostReverb().getPostProbe());
+        postChainPanel.refreshValueText();
     }
 
     const int activity = juce::roundToInt (snapCache_.historyFill * 100.0f);

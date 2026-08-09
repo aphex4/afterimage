@@ -1,5 +1,9 @@
 #pragma once
 
+// QUARANTINED — not on the AFTERIMAGE shipping path (see docs/CLEANUP_AUDIT.md,
+// docs/HARMONICS_ENGINE.md). Retained for git history / research only.
+// Do not include from PluginProcessor.
+
 #include "ScaleTheory.h"
 #include "../Utilities/Constants.h"
 
@@ -13,13 +17,7 @@ namespace afterimage
 {
 
 /**
-    Traditional auto-tune: autocorrelation pitch detect + delay-line pitch shift
-    toward nearest in-scale note.
-
-    Retune Speed: correction slew (fast = robotic).
-    Humanize: reduces correction on sustained/stable notes.
-
-    Conventional quality — not flagship commercial auto-tune.
+    LEGACY conventional auto-tune (autocorr + delay-line). Removed from product.
 */
 class AutoTune
 {
@@ -114,9 +112,7 @@ public:
             }
 
             // Retune speed → smoothing time
-            const float smoothSec = juce::jmap (1.0f - retuneSpeed_,
-                                                constants::retuneSmoothSecMin,
-                                                constants::retuneSmoothSecMax);
+            const float smoothSec = juce::jmap (1.0f - retuneSpeed_, 0.008f, 0.35f);
             const float coeff = 1.0f - std::exp (-1.0f / (float) (sampleRate_ * (double) smoothSec));
             ratioSmoothed_ += coeff * (targetRatio - ratioSmoothed_);
 

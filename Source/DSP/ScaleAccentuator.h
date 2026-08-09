@@ -13,13 +13,11 @@ namespace afterimage
 {
 
 /**
-    Scale Snap / Color Accentuator — harmonically spaced filter bank.
+    HARMONICS — polyphonic scale-aware spectral sweetener.
 
-    Out-of-key chromatic bands are attenuated and redirected toward the nearest
-    in-key neighbour (±1 semitone typically). Color 0..1 = dry/wet of the snap;
-    Color > 1 adds resonant emphasis on in-key notes.
-
-    Conventional filter-bank approach — musical, not a research pitch-shifter.
+    A bank of band-pass filters accents in-key pitch classes. Out-of-key bands
+    are attenuated (not "redirected"). Color 0 = identity wet; Color > 1 adds
+    in-key resonance. When disabled, process() is a no-op.
 */
 class ScaleAccentuator
 {
@@ -46,6 +44,9 @@ public:
         colorSmoothed_ = 0.0f;
     }
 
+    void setEnabled (bool on) noexcept { enabled_ = on; }
+    [[nodiscard]] bool isEnabled() const noexcept { return enabled_; }
+
     void setParams (int rootPc, ScaleType type, float color01to2, float transientPreserve,
                     std::uint16_t midiChordMask) noexcept
     {
@@ -67,6 +68,9 @@ public:
 
     void process (juce::AudioBuffer<float>& buffer) noexcept
     {
+        if (! enabled_)
+            return;
+
         const int n = buffer.getNumSamples();
         const int chans = juce::jmin (buffer.getNumChannels(), numChannels_);
         if (n <= 0 || chans <= 0)
@@ -83,8 +87,11 @@ public:
         {
             colorSmoothed_ += coeff * (colorTarget_ - colorSmoothed_);
             const float color = colorSmoothed_;
-            const float wet = juce::jlimit (0.0f, 1.0f, color); // 0..1 dry/wet
-            const float resonate = juce::jmax (0.0f, color - 1.0f); // 0..1 extra
+            const float wet = juce::jlimit (0.0f, 1.0f, color);
+            const float resonate = juce::jmax (0.0f, color - 1.0f);
+
+            if (wet < 1.0e-5f && resonate < 1.0e-5f)
+                continue;
 
             float mono = 0.0f;
             for (int ch = 0; ch < chans; ++ch)
@@ -92,14 +99,13 @@ public:
             mono *= 1.0f / (float) chans;
             const float absx = std::abs (mono);
             env_ += (absx > env_ ? atk : rel) * (absx - env_);
-            // Simple transient gate: reduce wet during attacks
             const float attackiness = juce::jlimit (0.0f, 1.0f, (absx - env_) * 8.0f);
             const float wetEff = wet * (1.0f - attackiness * transient_ * 0.85f);
 
             for (int ch = 0; ch < chans; ++ch)
             {
                 const float dry = dryScratch_.getSample (ch, i);
-                float snapped = 0.0f;
+                float accent = 0.0f;
                 float keyRes = 0.0f;
 
                 for (int b = 0; b < kNumBands; ++b)
@@ -107,17 +113,15 @@ public:
                     auto& st = states_[static_cast<size_t> (ch)][static_cast<size_t> (b)];
                     const float bp = st.process (dry, coeffs_[static_cast<size_t> (b)]);
                     const float w = bandWeight_[static_cast<size_t> (b)];
-                    snapped += bp * w;
+                    accent += bp * w;
                     if (bandInKey_[static_cast<size_t> (b)])
                         keyRes += bp;
                 }
 
-                // Soft normalize filter-bank sum
-                snapped *= 0.55f;
+                accent *= 0.55f;
                 keyRes *= 0.35f * resonate;
 
-                float out = dry * (1.0f - wetEff) + snapped * wetEff + keyRes;
-                buffer.setSample (ch, i, out);
+                buffer.setSample (ch, i, dry * (1.0f - wetEff) + accent * wetEff + keyRes);
             }
         }
     }
@@ -132,22 +136,17 @@ private:
             const bool inKey = isPitchClassInScale (activeMask_, pc);
             bandInKey_[static_cast<size_t> (b)] = inKey;
 
-            const int delta = snapSemitoneDelta (activeMask_, pc);
-            const int targetMidi = midi + delta;
-            const float hz = midiNoteToHz ((float) targetMidi);
-            const float q = inKey ? 9.0f : 7.0f;
+            // Centre stays on the band's own pitch — attenuate out-of-key, do not retune.
+            const float hz = midiNoteToHz ((float) midi);
+            const float q = inKey ? 9.0f : 6.0f;
             coeffs_[static_cast<size_t> (b)] = makeBandPass (sampleRate_, hz, q);
-
-            // Out-of-key bands redirect fully; in-key keep unity; slight cut on far redirects
-            if (inKey)
-                bandWeight_[static_cast<size_t> (b)] = 1.0f;
-            else
-                bandWeight_[static_cast<size_t> (b)] = (std::abs (delta) <= 1) ? 1.0f : 0.65f;
+            bandWeight_[static_cast<size_t> (b)] = inKey ? 1.0f : 0.35f;
         }
     }
 
     double sampleRate_ = 44100.0;
     int numChannels_ = 2;
+    bool enabled_ = false;
     int root_ = 0;
     ScaleType type_ = ScaleType::Major;
     std::uint16_t baseMask_ = 0x0FFFu;

@@ -24,13 +24,6 @@ enum class EqFilterType : int
     NumTypes
 };
 
-enum class EqChannelMode : int
-{
-    Stereo = 0,
-    LeftRight,
-    MidSide
-};
-
 struct EqBandParams
 {
     bool enabled = false;
@@ -47,25 +40,21 @@ inline BiquadCoeffs makeLowShelf (double sampleRate, float freq, float q, float 
 inline BiquadCoeffs makeNotch (double sampleRate, float freq, float q) noexcept;
 
 /**
-    Eight-band parametric EQ — last creative stage before Gain Match.
-    Stereo / LR (independent state, linked controls) / Mid-Side.
-    Solo audits a single band. ×4 cascades LP/HP stages for steeper slopes.
+    Eight-band stereo-linked parametric EQ — last creative stage before Gain Match.
+    Exclusive solo (at most one band). ×4 cascades LP/HP stages.
+    RT-safe stack biquads; skip process when inactive.
 */
 class ParametricEQ
 {
 public:
     static constexpr int kBands = constants::parametricEqBands;
-    static constexpr int kMaxStages = 4; // ×4 steepness
+    static constexpr int kMaxStages = 4;
 
     void prepare (double sampleRate, int maxBlock, int numChannels)
     {
         sampleRate_ = std::max (1.0, sampleRate);
         numChannels_ = juce::jmax (1, juce::jmin (2, numChannels));
         maxBlock_ = juce::jmax (1, maxBlock);
-        midScratch_.setSize (1, maxBlock_, false, true, true);
-        sideScratch_.setSize (1, maxBlock_, false, true, true);
-        leftScratch_.setSize (1, maxBlock_, false, true, true);
-        rightScratch_.setSize (1, maxBlock_, false, true, true);
         probe_.prepare (sampleRate_, maxBlock_);
         reset();
         for (int b = 0; b < kBands; ++b)
@@ -84,23 +73,51 @@ public:
         probe_.reset();
     }
 
-    void setChannelMode (EqChannelMode mode) noexcept { channelMode_ = mode; }
+    void setMasterEnabled (bool on) noexcept { masterEnabled_ = on; }
+    [[nodiscard]] bool isMasterEnabled() const noexcept { return masterEnabled_; }
 
     void setBand (int index, const EqBandParams& p) noexcept
     {
         if (index < 0 || index >= kBands)
             return;
+
         auto& dst = bands_[static_cast<size_t> (index)];
         const bool needsRebuild = dst.type != p.type || dst.x4 != p.x4
             || std::abs (dst.freqHz - p.freqHz) > 0.25f
             || std::abs (dst.gainDb - p.gainDb) > 0.05f
             || std::abs (dst.q - p.q) > 0.01f;
+
         dst = p;
         dst.freqHz = juce::jlimit (20.0f, 20000.0f, dst.freqHz);
         dst.gainDb = juce::jlimit (-24.0f, 24.0f, dst.gainDb);
         dst.q = juce::jlimit (0.1f, 20.0f, dst.q);
+
+        // Exclusive solo: newly soloed band clears others.
+        if (dst.solo)
+        {
+            for (int b = 0; b < kBands; ++b)
+                if (b != index)
+                    bands_[static_cast<size_t> (b)].solo = false;
+        }
+
         if (needsRebuild)
             updateBandCoeffs (index);
+    }
+
+    /** Apply exclusive solo from APVTS (multiple may be true — keep lowest index). */
+    void applyExclusiveSoloFromFlags() noexcept
+    {
+        int first = -1;
+        for (int b = 0; b < kBands; ++b)
+        {
+            if (bands_[static_cast<size_t> (b)].solo)
+            {
+                if (first < 0)
+                    first = b;
+                else
+                    bands_[static_cast<size_t> (b)].solo = false;
+            }
+        }
     }
 
     [[nodiscard]] const EqBandParams& getBand (int index) const noexcept
@@ -110,7 +127,18 @@ public:
 
     [[nodiscard]] const SpectrumProbe& getProbe() const noexcept { return probe_; }
 
-    /** Magnitude response in dB at hz for curve drawing (UI thread). */
+    [[nodiscard]] bool isActive() const noexcept
+    {
+        if (! masterEnabled_)
+            return false;
+        if (findSoloBand() >= 0)
+            return true;
+        for (int b = 0; b < kBands; ++b)
+            if (bands_[static_cast<size_t> (b)].enabled)
+                return true;
+        return false;
+    }
+
     [[nodiscard]] float responseDbAt (float hz) const noexcept
     {
         std::complex<double> h (1.0, 0.0);
@@ -127,7 +155,6 @@ public:
             for (int s = 0; s < stages; ++s)
             {
                 const auto& c = coeffs_[static_cast<size_t> (b)][static_cast<size_t> (s)];
-                // H(z) = (b0 + b1 z^-1 + b2 z^-2) / (1 + a1 z^-1 + a2 z^-2)
                 const std::complex<double> num = (double) c.b0 + (double) c.b1 * z + (double) c.b2 * z2;
                 const std::complex<double> den = 1.0 + (double) c.a1 * z + (double) c.a2 * z2;
                 if (std::abs (den) > 1.0e-12)
@@ -141,42 +168,13 @@ public:
     void process (juce::AudioBuffer<float>& buffer) noexcept
     {
         const int n = buffer.getNumSamples();
-        const int chans = juce::jmin (buffer.getNumChannels(), 2);
-        if (n <= 0 || chans <= 0)
+        const int chans = juce::jmin (buffer.getNumChannels(), numChannels_);
+        if (n <= 0 || chans <= 0 || ! isActive())
             return;
 
         const int soloIndex = findSoloBand();
-
-        if (channelMode_ == EqChannelMode::MidSide && chans == 2)
-        {
-            for (int i = 0; i < n; ++i)
-            {
-                const float l = buffer.getSample (0, i);
-                const float r = buffer.getSample (1, i);
-                midScratch_.setSample (0, i, 0.5f * (l + r));
-                sideScratch_.setSample (0, i, 0.5f * (l - r));
-            }
-            processMono (midScratch_.getWritePointer (0), n, 0, soloIndex);
-            processMono (sideScratch_.getWritePointer (0), n, 1, soloIndex);
-            for (int i = 0; i < n; ++i)
-            {
-                const float m = midScratch_.getSample (0, i);
-                const float s = sideScratch_.getSample (0, i);
-                buffer.setSample (0, i, m + s);
-                buffer.setSample (1, i, m - s);
-            }
-        }
-        else if (channelMode_ == EqChannelMode::LeftRight && chans == 2)
-        {
-            processMono (buffer.getWritePointer (0), n, 0, soloIndex);
-            processMono (buffer.getWritePointer (1), n, 1, soloIndex);
-        }
-        else
-        {
-            // Stereo-linked: process L, copy state path 0→1 by processing both with path 0 coeffs/state separately
-            for (int ch = 0; ch < chans; ++ch)
-                processMono (buffer.getWritePointer (ch), n, ch, soloIndex);
-        }
+        for (int ch = 0; ch < chans; ++ch)
+            processMono (buffer.getWritePointer (ch), n, ch, soloIndex);
 
         const float* l = buffer.getReadPointer (0);
         const float* r = chans > 1 ? buffer.getReadPointer (1) : nullptr;
@@ -194,7 +192,7 @@ private:
     int findSoloBand() const noexcept
     {
         for (int b = 0; b < kBands; ++b)
-            if (bands_[static_cast<size_t> (b)].solo && bands_[static_cast<size_t> (b)].enabled)
+            if (bands_[static_cast<size_t> (b)].solo)
                 return b;
         return -1;
     }
@@ -220,13 +218,13 @@ private:
         const float g = juce::Decibels::decibelsToGain (band.gainDb);
         switch (band.type)
         {
-            case EqFilterType::LowPass:  return makeLowPass (sampleRate_, band.freqHz, band.q);
-            case EqFilterType::HighPass: return makeHighPass (sampleRate_, band.freqHz, band.q);
-            case EqFilterType::LowShelf: return makeLowShelf (sampleRate_, band.freqHz, band.q, g);
-            case EqFilterType::HighShelf:return makeHighShelf (sampleRate_, band.freqHz, band.q, g);
-            case EqFilterType::Notch:    return makeNotch (sampleRate_, band.freqHz, band.q);
+            case EqFilterType::LowPass:   return makeLowPass (sampleRate_, band.freqHz, band.q);
+            case EqFilterType::HighPass:  return makeHighPass (sampleRate_, band.freqHz, band.q);
+            case EqFilterType::LowShelf:  return makeLowShelf (sampleRate_, band.freqHz, band.q, g);
+            case EqFilterType::HighShelf: return makeHighShelf (sampleRate_, band.freqHz, band.q, g);
+            case EqFilterType::Notch:     return makeNotch (sampleRate_, band.freqHz, band.q);
             case EqFilterType::Bell:
-            default:                     return makePeak (sampleRate_, band.freqHz, band.q, g);
+            default:                      return makePeak (sampleRate_, band.freqHz, band.q, g);
         }
     }
 
@@ -239,7 +237,6 @@ private:
 
             if (soloIndex >= 0)
             {
-                // Audition: band-affected signal only (filtered wet of that band)
                 const int b = soloIndex;
                 const auto& band = bands_[static_cast<size_t> (b)];
                 const int stages = numStages (band);
@@ -247,7 +244,6 @@ private:
                 for (int st = 0; st < stages; ++st)
                     s = states_[static_cast<size_t> (path)][static_cast<size_t> (b)][static_cast<size_t> (st)]
                             .process (s, coeffs_[static_cast<size_t> (b)][static_cast<size_t> (st)]);
-                // For boost/cut audition use wet-dry of that stage
                 y = s;
             }
             else
@@ -270,12 +266,10 @@ private:
     double sampleRate_ = 44100.0;
     int numChannels_ = 2;
     int maxBlock_ = 512;
-    EqChannelMode channelMode_ = EqChannelMode::Stereo;
+    bool masterEnabled_ = false;
     std::array<EqBandParams, kBands> bands_ {};
     std::array<std::array<BiquadCoeffs, kMaxStages>, kBands> coeffs_ {};
-    // [path L/M or R/S][band][stage]
     std::array<std::array<std::array<BiquadState, kMaxStages>, kBands>, 2> states_ {};
-    juce::AudioBuffer<float> midScratch_, sideScratch_, leftScratch_, rightScratch_;
     SpectrumProbe probe_;
 };
 

@@ -100,6 +100,20 @@ namespace constants
     constexpr int    spectrumProbeFftOrder = 9; // 512
     constexpr int    eqBandsPerStage     = 4;
 
+    // Compile-time stage bypass for sound regression (OR bits; not a commercial UI).
+    // A=1 SpectralEngine  B=2 Force Mix dry  C=4 Harmonics
+    // D=8 Formant/DeEsser/Reverb  E=16 Parametric EQ  F=32 Gain Match
+#if ! defined (AFTERIMAGE_STAGE_BYPASS)
+    #define AFTERIMAGE_STAGE_BYPASS 0
+#endif
+    constexpr int stageBypassMask = AFTERIMAGE_STAGE_BYPASS;
+    constexpr int stageBypassSpectral  = 1;
+    constexpr int stageBypassMixDry    = 2;
+    constexpr int stageBypassHarmonics = 4;
+    constexpr int stageBypassFx        = 8;
+    constexpr int stageBypassEq        = 16;
+    constexpr int stageBypassGainMatch = 32;
+
     // -------------------------------------------------------------------------
     // UI
     // -------------------------------------------------------------------------
@@ -173,21 +187,27 @@ namespace constants
         200.0f, 800.0f, 2500.0f, 8000.0f
     };
 
-    // Scale Accentuator / Auto-Tune (Phase B)
-    inline constexpr const char* idPitchPath         = "pitchPath";      // 0 Off, 1 Scale Snap, 2 Auto-Tune
+    // HARMONICS (scale-aware spectral sweetener — not Autotune)
+    inline constexpr const char* idHarmonicsEnabled  = "harmonicsEnabled";
     inline constexpr const char* idScaleRoot         = "scaleRoot";      // 0=C .. 11=B
-    inline constexpr const char* idScaleType         = "scaleType";      // 0 Major, 1 Natural Minor, 2 Dorian, 3 Pentatonic Maj, 4 Pentatonic Min, 5 Chromatic
+    inline constexpr const char* idScaleType         = "scaleType";      // 0 Major … 5 Chromatic
     inline constexpr const char* idScaleColor        = "scaleColor";     // 0..2 (1=100% wet; >1 resonance)
-    inline constexpr const char* idScaleTransient    = "scaleTransient"; // 0..1 transient preserve for scale snap
-    inline constexpr const char* idRetuneSpeed       = "retuneSpeed";    // 0..1 (0 slow/natural, 1 fast/robotic)
-    inline constexpr const char* idHumanize          = "humanize";       // 0..1
+    inline constexpr const char* idScaleTransient    = "scaleTransient"; // 0..1 transient preserve
 
-    inline constexpr float retuneSmoothSecMin = 0.008f;
-    inline constexpr float retuneSmoothSecMax = 0.35f;
+    // Explicit optional-module enables (skip DSP when false)
+    inline constexpr const char* idFormantEnabled    = "formantEnabled";
+    inline constexpr const char* idDeEsserEnabled    = "deEsserEnabled";
+    inline constexpr const char* idReverbEnabled     = "reverbEnabled";
+    inline constexpr const char* idEqEnabled         = "eqEnabled";
 
-    // Parametric EQ (Phase C) — last creative stage before Gain Match
+    // Legacy IDs retained for session migration only (not in createParameterLayout).
+    inline constexpr const char* idPitchPathLegacy   = "pitchPath";
+    inline constexpr const char* idRetuneSpeedLegacy = "retuneSpeed";
+    inline constexpr const char* idHumanizeLegacy    = "humanize";
+    inline constexpr const char* idEqChannelModeLegacy = "eqChannelMode";
+
+    // Parametric EQ — last creative stage before Gain Match (stereo-linked)
     constexpr int    parametricEqBands   = 8;
-    inline constexpr const char* idEqChannelMode     = "eqChannelMode"; // 0 Stereo, 1 LR, 2 MS
 
     // Per-band IDs use eqN* where N=1..8 (helpers below).
     inline constexpr const char* idEq1On = "eq1On";

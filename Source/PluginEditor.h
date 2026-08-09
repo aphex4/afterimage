@@ -33,7 +33,7 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
 
-    enum class EditorView { Memory = 0, Scale, Eq };
+    enum class EditorView { Memory = 0, Harmonics, Eq, Fx };
     enum class DockGroup { Memory, Spectral, Output };
 
     struct DockItem
@@ -62,8 +62,9 @@ private:
     juce::String cachedMemoryStatus_;
     juce::ComboBox presetBox;
     juce::TextButton memoryViewBtn { "MEMORY" };
-    juce::TextButton scaleViewBtn { "SCALE" };
+    juce::TextButton harmonicsViewBtn { "HARMONICS" };
     juce::TextButton eqViewBtn { "EQ" };
+    juce::TextButton fxViewBtn { "FX" };
 
 #if defined (AFTERIMAGE_ENABLE_LICENSING)
     std::unique_ptr<LicensePanel> licensePanel;
@@ -84,6 +85,7 @@ private:
     std::vector<std::unique_ptr<AfterimageKnob>> knobs;
     juce::Rectangle<float> dockBounds_;
     std::array<juce::Rectangle<float>, 2> dockDividers_ {};
+    juce::Rectangle<float> navBarBounds_;
     EditorView editorView_ = EditorView::Memory;
 
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> freezeAttachment;

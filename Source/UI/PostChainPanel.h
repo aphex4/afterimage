@@ -13,8 +13,7 @@
 #include <memory>
 
 /**
-    Right-column post-chain modules: Reverb (with Pre/Post EQ), Formant, De-esser.
-    Same glass / cyan language as the rest of AFTERIMAGE — not dock knobs.
+    FX page: Reverb (Pre/Post EQ), Formant, De-esser — each with explicit enable.
 */
 class PostChainPanel : public juce::Component
 {
@@ -30,12 +29,27 @@ public:
             l.setInterceptsMouseClicks (false, false);
         };
 
+        styleHeader (pageTitle_, "FX");
         styleHeader (reverbTitle_, "REVERB");
         styleHeader (formantTitle_, "FORMANT");
         styleHeader (deEssTitle_, "DE-ESSER");
+        addAndMakeVisible (pageTitle_);
         addAndMakeVisible (reverbTitle_);
         addAndMakeVisible (formantTitle_);
         addAndMakeVisible (deEssTitle_);
+
+        reverbOn_.setButtonText ("ON");
+        reverbOn_.setClickingTogglesState (true);
+        reverbOn_.setTooltip ("Enable reverb. Off (and wet 0) leaves the dry path untouched.");
+        formantOn_.setButtonText ("ON");
+        formantOn_.setClickingTogglesState (true);
+        formantOn_.setTooltip ("Enable formant colour. Off is identity.");
+        deEssOn_.setButtonText ("ON");
+        deEssOn_.setClickingTogglesState (true);
+        deEssOn_.setTooltip ("Enable de-esser. Off is identity.");
+        addAndMakeVisible (reverbOn_);
+        addAndMakeVisible (formantOn_);
+        addAndMakeVisible (deEssOn_);
 
         reverbTypeBox_.addItem ("Spring", 1);
         reverbTypeBox_.addItem ("Hall", 2);
@@ -78,6 +92,12 @@ public:
 
     void attach (juce::AudioProcessorValueTreeState& apvts)
     {
+        reverbOnAtt_ = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
+            apvts, afterimage::constants::idReverbEnabled, reverbOn_);
+        formantOnAtt_ = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
+            apvts, afterimage::constants::idFormantEnabled, formantOn_);
+        deEssOnAtt_ = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
+            apvts, afterimage::constants::idDeEsserEnabled, deEssOn_);
         typeAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
             apvts, afterimage::constants::idReverbType, reverbTypeBox_);
         wetKnob_.attachToParameter (apvts, afterimage::constants::idReverbWet);
@@ -123,7 +143,6 @@ public:
             AfterimageLookAndFeel::paintGlassDock (g, panel.toFloat());
         }
 
-        // Formant track accents
         if (! formantTrack_.isEmpty())
         {
             g.setColour (AfterimageLookAndFeel::accentCyan().withAlpha (0.25f));
@@ -139,11 +158,13 @@ public:
 
     void resized() override
     {
-        auto area = getLocalBounds();
+        auto area = getLocalBounds().reduced (8);
+        pageTitle_.setBounds (area.removeFromTop (22));
+        area.removeFromTop (6);
+
         const int gap = juce::jmax (10, area.getHeight() / 28);
         const int totalGaps = gap * 2;
         const int usable = juce::jmax (120, area.getHeight() - totalGaps);
-        // Reverb gets ~58%, Formant ~20%, De-esser ~22%
         const int reverbH = juce::roundToInt ((float) usable * 0.58f);
         const int formantH = juce::roundToInt ((float) usable * 0.20f);
         const int deEssH = usable - reverbH - formantH;
@@ -166,6 +187,7 @@ private:
     {
         auto header = r.removeFromTop (22);
         reverbTitle_.setBounds (header.removeFromLeft (70));
+        reverbOn_.setBounds (header.removeFromLeft (44).reduced (2, 0));
         wetKnob_.setBounds (header.removeFromRight (56).withHeight (juce::jmin (header.getHeight() + 40, 70)).translated (0, -4));
         reverbTypeBox_.setBounds (header.removeFromLeft (juce::jmin (160, header.getWidth() - 8)).reduced (4, 0));
 
@@ -177,7 +199,9 @@ private:
 
     void layoutFormant (juce::Rectangle<int> r)
     {
-        formantTitle_.setBounds (r.removeFromTop (18));
+        auto header = r.removeFromTop (18);
+        formantTitle_.setBounds (header.removeFromLeft (80));
+        formantOn_.setBounds (header.removeFromLeft (44).reduced (2, 0));
         auto labels = r.removeFromBottom (16);
         formantLow_.setBounds (labels.removeFromLeft (40));
         formantHigh_.setBounds (labels.removeFromRight (40));
@@ -187,18 +211,22 @@ private:
 
     void layoutDeEss (juce::Rectangle<int> r)
     {
-        deEssTitle_.setBounds (r.removeFromTop (18));
+        auto header = r.removeFromTop (18);
+        deEssTitle_.setBounds (header.removeFromLeft (80));
+        deEssOn_.setBounds (header.removeFromLeft (44).reduced (2, 0));
         deEssKnob_.setBounds (r.withSizeKeepingCentre (juce::jmin (90, r.getWidth()), juce::jmin (90, r.getHeight())));
     }
 
-    juce::Label reverbTitle_, formantTitle_, deEssTitle_;
+    juce::Label pageTitle_, reverbTitle_, formantTitle_, deEssTitle_;
     juce::Label formantLow_, formantHigh_;
+    juce::ToggleButton reverbOn_, formantOn_, deEssOn_;
     juce::ComboBox reverbTypeBox_;
     AfterimageKnob wetKnob_;
     AfterimageKnob deEssKnob_;
     juce::Slider formantSlider_;
     EqSpectrumView preEq_, postEq_;
 
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> reverbOnAtt_, formantOnAtt_, deEssOnAtt_;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> typeAttachment_;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> formantAttachment_;
     juce::AudioProcessorValueTreeState* apvts_ = nullptr;

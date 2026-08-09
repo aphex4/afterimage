@@ -14,6 +14,7 @@
 
 /**
     Parametric EQ view: interactive spectrum + 8 band nodes / dials.
+    Stereo-linked only. One ×4 control for the selected band. Exclusive solo.
 */
 class ParametricEqPanel : public juce::Component
 {
@@ -25,14 +26,18 @@ public:
         title_.setColour (juce::Label::textColourId, AfterimageLookAndFeel::textPrimary());
         addAndMakeVisible (title_);
 
-        modeBox_.addItem ("Stereo", 1);
-        modeBox_.addItem ("Left / Right", 2);
-        modeBox_.addItem ("Mid / Side", 3);
-        modeBox_.setTooltip ("EQ processing mode. LR/MS use independent filter state with linked controls.");
-        addAndMakeVisible (modeBox_);
+        masterOn_.setButtonText ("ON");
+        masterOn_.setClickingTogglesState (true);
+        masterOn_.setTooltip ("Enable the parametric EQ stage. Off skips EQ processing.");
+        addAndMakeVisible (masterOn_);
 
         typeBox_.addItemList ({ "Low Pass", "High Pass", "Low Shelf", "High Shelf", "Bell", "Notch" }, 1);
         addAndMakeVisible (typeBox_);
+
+        x4Button_.setButtonText ("x4");
+        x4Button_.setClickingTogglesState (true);
+        x4Button_.setTooltip ("Steeper LP/HP slope (4 cascaded stages) for the selected band.");
+        addAndMakeVisible (x4Button_);
 
         for (int i = 0; i < afterimage::constants::parametricEqBands; ++i)
         {
@@ -47,16 +52,14 @@ public:
             onButtons_[static_cast<size_t> (i)].setClickingTogglesState (true);
             addAndMakeVisible (onButtons_[static_cast<size_t> (i)]);
 
-            soloButtons_[static_cast<size_t> (i)].setButtonText (juce::CharPointer_UTF8 ("\xe2\x99\xaa")); // ♪ as stand-in; paint headphone-ish
             soloButtons_[static_cast<size_t> (i)].setButtonText ("S");
             soloButtons_[static_cast<size_t> (i)].setClickingTogglesState (true);
-            soloButtons_[static_cast<size_t> (i)].setTooltip ("Solo / audition this band");
+            soloButtons_[static_cast<size_t> (i)].setTooltip ("Solo this band exclusively");
+            soloButtons_[static_cast<size_t> (i)].onClick = [this, i]
+            {
+                exclusiveSolo (i, soloButtons_[static_cast<size_t> (i)].getToggleState());
+            };
             addAndMakeVisible (soloButtons_[static_cast<size_t> (i)]);
-
-            x4Buttons_[static_cast<size_t> (i)].setButtonText ("x4");
-            x4Buttons_[static_cast<size_t> (i)].setClickingTogglesState (true);
-            x4Buttons_[static_cast<size_t> (i)].setTooltip ("Steeper LP/HP slope (4 cascaded stages)");
-            addAndMakeVisible (x4Buttons_[static_cast<size_t> (i)]);
         }
 
         freqKnob_.setNameLabel ("FREQ");
@@ -65,15 +68,14 @@ public:
         addAndMakeVisible (freqKnob_);
         addAndMakeVisible (gainKnob_);
         addAndMakeVisible (qKnob_);
-        addAndMakeVisible (typeBox_);
     }
 
     void attach (juce::AudioProcessorValueTreeState& apvts, afterimage::ParametricEQ& eq)
     {
         apvts_ = &apvts;
         eq_ = &eq;
-        modeAtt_ = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
-            apvts, afterimage::constants::idEqChannelMode, modeBox_);
+        masterAtt_ = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
+            apvts, afterimage::constants::idEqEnabled, masterOn_);
 
         for (int i = 0; i < afterimage::constants::parametricEqBands; ++i)
         {
@@ -82,8 +84,6 @@ public:
                 apvts, "eq" + n + "On", onButtons_[static_cast<size_t> (i)]);
             soloAtt_[static_cast<size_t> (i)] = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
                 apvts, "eq" + n + "Solo", soloButtons_[static_cast<size_t> (i)]);
-            x4Att_[static_cast<size_t> (i)] = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
-                apvts, "eq" + n + "X4", x4Buttons_[static_cast<size_t> (i)]);
         }
         selectBand (0);
     }
@@ -118,7 +118,6 @@ public:
         g.setColour (AfterimageLookAndFeel::meterTrack());
         g.fillRoundedRectangle (r, 6.0f);
 
-        // Spectrum
         juce::Path spec;
         const int nb = afterimage::SpectrumProbe::kBins;
         for (int i = 0; i < nb; ++i)
@@ -130,7 +129,6 @@ public:
         g.setColour (AfterimageLookAndFeel::accentCyan().withAlpha (0.35f));
         g.strokePath (spec, juce::PathStrokeType (1.0f));
 
-        // EQ curve
         if (eq_ != nullptr)
         {
             juce::Path curve;
@@ -138,7 +136,7 @@ public:
             for (int i = 0; i < pts; ++i)
             {
                 const float t = (float) i / (float) (pts - 1);
-                const float hz = 20.0f * std::pow (1000.0f, t); // 20..20k log
+                const float hz = 20.0f * std::pow (1000.0f, t);
                 const float db = juce::jlimit (-24.0f, 24.0f, eq_->responseDbAt (hz));
                 const float x = r.getX() + t * r.getWidth();
                 const float y = r.getCentreY() - (db / 24.0f) * (r.getHeight() * 0.42f);
@@ -147,7 +145,6 @@ public:
             g.setColour (AfterimageLookAndFeel::accentCyan());
             g.strokePath (curve, juce::PathStrokeType (1.6f));
 
-            // Nodes
             for (int b = 0; b < afterimage::constants::parametricEqBands; ++b)
             {
                 const auto& band = eq_->getBand (b);
@@ -170,7 +167,7 @@ public:
         auto area = getLocalBounds().reduced (10);
         auto header = area.removeFromTop (26);
         title_.setBounds (header.removeFromLeft (140));
-        modeBox_.setBounds (header.removeFromLeft (140).reduced (4, 0));
+        masterOn_.setBounds (header.removeFromLeft (56).reduced (4, 0));
 
         auto bandRow = area.removeFromTop (26);
         const int cell = bandRow.getWidth() / afterimage::constants::parametricEqBands;
@@ -184,7 +181,7 @@ public:
 
         auto dials = area.removeFromBottom (100);
         typeBox_.setBounds (dials.removeFromLeft (120).reduced (4, 20));
-        x4Buttons_[static_cast<size_t> (selected_)].setBounds (dials.removeFromLeft (44).reduced (4, 28));
+        x4Button_.setBounds (dials.removeFromLeft (44).reduced (4, 28));
         const int kw = dials.getWidth() / 3;
         freqKnob_.setBounds (dials.removeFromLeft (kw));
         gainKnob_.setBounds (dials.removeFromLeft (kw));
@@ -221,23 +218,36 @@ public:
     void mouseUp (const juce::MouseEvent&) override { dragging_ = -1; }
 
 private:
+    void exclusiveSolo (int index, bool on)
+    {
+        if (apvts_ == nullptr) return;
+        if (! on)
+            return;
+        for (int i = 0; i < afterimage::constants::parametricEqBands; ++i)
+        {
+            if (i == index) continue;
+            if (auto* p = apvts_->getParameter ("eq" + juce::String (i + 1) + "Solo"))
+                if (p->getValue() > 0.5f)
+                    p->setValueNotifyingHost (0.0f);
+        }
+    }
+
     void selectBand (int index)
     {
         selected_ = juce::jlimit (0, afterimage::constants::parametricEqBands - 1, index);
         bandButtons_[static_cast<size_t> (selected_)].setToggleState (true, juce::dontSendNotification);
         if (apvts_ == nullptr) return;
 
-        freqAtt_.reset();
-        gainAtt_.reset();
-        qAtt_.reset();
         typeAtt_.reset();
+        x4Att_.reset();
         const auto n = juce::String (selected_ + 1);
         freqKnob_.attachToParameter (*apvts_, "eq" + n + "Freq");
         gainKnob_.attachToParameter (*apvts_, "eq" + n + "Gain");
         qKnob_.attachToParameter (*apvts_, "eq" + n + "Q");
         typeAtt_ = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
             *apvts_, "eq" + n + "Type", typeBox_);
-        resized();
+        x4Att_ = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
+            *apvts_, "eq" + n + "X4", x4Button_);
         refreshValueText();
         repaint();
     }
@@ -266,16 +276,17 @@ private:
     }
 
     juce::Label title_;
-    juce::ComboBox modeBox_, typeBox_;
+    juce::ToggleButton masterOn_;
+    juce::ComboBox typeBox_;
+    juce::ToggleButton x4Button_;
     std::array<juce::TextButton, afterimage::constants::parametricEqBands> bandButtons_ {};
     std::array<juce::ToggleButton, afterimage::constants::parametricEqBands> onButtons_ {};
     std::array<juce::ToggleButton, afterimage::constants::parametricEqBands> soloButtons_ {};
-    std::array<juce::ToggleButton, afterimage::constants::parametricEqBands> x4Buttons_ {};
     AfterimageKnob freqKnob_, gainKnob_, qKnob_;
 
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> modeAtt_, typeAtt_;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> freqAtt_, gainAtt_, qAtt_;
-    std::array<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>, afterimage::constants::parametricEqBands> onAtt_ {}, soloAtt_ {}, x4Att_ {};
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> masterAtt_, x4Att_;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> typeAtt_;
+    std::array<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>, afterimage::constants::parametricEqBands> onAtt_ {}, soloAtt_ {};
 
     juce::AudioProcessorValueTreeState* apvts_ = nullptr;
     afterimage::ParametricEQ* eq_ = nullptr;

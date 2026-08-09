@@ -15,7 +15,7 @@ namespace factory
 struct Preset
 {
     const char* name;
-    int   mode;              // 0 Shadow, 1 Erase (legacy 2 Merge mapped → Shadow on load)
+    int   mode;              // 0 Shadow, 1 Erase
     float memoryLengthSec;
     float recallPosition;
     float influence;
@@ -26,38 +26,39 @@ struct Preset
     float randomRecall;
     float outputGainDb;
     float mix;
-    // Post-chain defaults (optional; older preset rows use 0 / centre)
     int   reverbType;        // 0 Spring, 1 Hall, 2 Room
     float reverbWet;
     float formant;           // 0.5 = centre
     float deEsser;
+    bool  harmonicsEnabled;
+    bool  formantEnabled;
+    bool  deEsserEnabled;
+    bool  reverbEnabled;
 };
 
 /**
-    Factory bank — Shadow / Erase only (Merge removed from product).
-    Former Merge looks converted to Shadow + subtle Hall for tail smoothing.
-    Soft Shadow remains program 0 / APVTS default direction.
+    Factory bank — Shadow / Erase. Soft Shadow (program 0) is spectral-memory core only:
+    optional modules off / neutral.
 */
 inline constexpr Preset kPresets[] = {
-    // --- Shadow ---
-    { "Soft Shadow",       0, 3.0f, 0.40f, 0.50f, 0.25f, 0.22f, 0.35f, false, 0.00f, 0.0f, 1.0f, 1, 0.00f, 0.50f, 0.00f },
-    { "Spectral Hall",     0, 5.5f, 0.52f, 0.58f, 0.18f, 0.48f, 0.40f, false, 0.00f, 0.0f, 1.0f, 1, 0.22f, 0.50f, 0.00f },
-    { "Vocal Afterglow",   0, 3.2f, 0.35f, 0.52f, 0.28f, 0.22f, 0.55f, false, 0.00f, 0.0f, 1.0f, 2, 0.10f, 0.55f, 0.15f },
-    { "Memory Delay",      0, 4.0f, 0.62f, 0.55f, 0.22f, 0.10f, 0.32f, false, 0.00f, 0.0f, 1.0f, 0, 0.08f, 0.50f, 0.00f },
-    { "Ghost Pad",         0, 4.5f, 0.48f, 0.50f, 0.30f, 0.42f, 0.45f, false, 0.08f, 0.0f, 0.95f, 1, 0.18f, 0.48f, 0.00f },
-    { "Frozen Choir",      0, 4.0f, 0.45f, 0.62f, 0.15f, 0.35f, 0.30f, true,  0.00f, 0.0f, 1.0f, 1, 0.15f, 0.52f, 0.00f },
-    // Former Merge bank → Shadow wash + modest reverb
-    { "Melt",              0, 3.5f, 0.45f, 0.58f, 0.22f, 0.58f, 0.40f, false, 0.00f, 0.0f, 1.0f, 1, 0.20f, 0.50f, 0.00f },
-    { "Vocal Blur",        0, 3.0f, 0.38f, 0.52f, 0.25f, 0.55f, 0.50f, false, 0.00f, 0.0f, 1.0f, 2, 0.14f, 0.58f, 0.20f },
-    { "Past Into Present", 0, 4.5f, 0.55f, 0.65f, 0.28f, 0.52f, 0.36f, false, 0.05f, 0.0f, 1.0f, 1, 0.16f, 0.50f, 0.00f },
-    { "Spectral Fog",      0, 5.0f, 0.50f, 0.62f, 0.32f, 0.68f, 0.32f, false, 0.10f, -0.5f, 1.0f, 1, 0.24f, 0.45f, 0.00f },
-    { "Memory Wash",       0, 6.0f, 0.60f, 0.70f, 0.35f, 0.72f, 0.28f, false, 0.12f, -1.0f, 0.95f, 1, 0.28f, 0.42f, 0.00f },
+    // --- Shadow (core-first; reverb only when intentionally enabled) ---
+    { "Soft Shadow",       0, 3.0f, 0.40f, 0.50f, 0.25f, 0.22f, 0.35f, false, 0.00f, 0.0f, 1.0f, 1, 0.00f, 0.50f, 0.00f, false, false, false, false },
+    { "Spectral Hall",     0, 5.5f, 0.52f, 0.58f, 0.18f, 0.48f, 0.40f, false, 0.00f, 0.0f, 1.0f, 1, 0.22f, 0.50f, 0.00f, false, false, false, true },
+    { "Vocal Afterglow",   0, 3.2f, 0.35f, 0.52f, 0.28f, 0.22f, 0.55f, false, 0.00f, 0.0f, 1.0f, 2, 0.10f, 0.55f, 0.15f, false, true, true, true },
+    { "Memory Delay",      0, 4.0f, 0.62f, 0.55f, 0.22f, 0.10f, 0.32f, false, 0.00f, 0.0f, 1.0f, 0, 0.08f, 0.50f, 0.00f, false, false, false, true },
+    { "Ghost Pad",         0, 4.5f, 0.48f, 0.50f, 0.30f, 0.42f, 0.45f, false, 0.08f, 0.0f, 0.95f, 1, 0.18f, 0.48f, 0.00f, false, false, false, true },
+    { "Frozen Choir",      0, 4.0f, 0.45f, 0.62f, 0.15f, 0.35f, 0.30f, true,  0.00f, 0.0f, 1.0f, 1, 0.15f, 0.52f, 0.00f, false, false, false, true },
+    { "Melt",              0, 3.5f, 0.45f, 0.58f, 0.22f, 0.58f, 0.40f, false, 0.00f, 0.0f, 1.0f, 1, 0.20f, 0.50f, 0.00f, false, false, false, true },
+    { "Vocal Blur",        0, 3.0f, 0.38f, 0.52f, 0.25f, 0.55f, 0.50f, false, 0.00f, 0.0f, 1.0f, 2, 0.14f, 0.58f, 0.20f, false, true, true, true },
+    { "Past Into Present", 0, 4.5f, 0.55f, 0.65f, 0.28f, 0.52f, 0.36f, false, 0.05f, 0.0f, 1.0f, 1, 0.16f, 0.50f, 0.00f, false, false, false, true },
+    { "Spectral Fog",      0, 5.0f, 0.50f, 0.62f, 0.32f, 0.68f, 0.32f, false, 0.10f, -0.5f, 1.0f, 1, 0.24f, 0.45f, 0.00f, false, false, false, true },
+    { "Memory Wash",       0, 6.0f, 0.60f, 0.70f, 0.35f, 0.72f, 0.28f, false, 0.12f, -1.0f, 0.95f, 1, 0.28f, 0.42f, 0.00f, false, false, false, true },
 
     // --- Erase ---
-    { "Loop Cleaner",      1, 3.0f, 0.28f, 0.48f, 0.30f, 0.16f, 0.50f, false, 0.00f, 0.0f, 1.0f, 2, 0.00f, 0.50f, 0.10f },
-    { "Resonance Memory",  1, 4.0f, 0.40f, 0.55f, 0.22f, 0.28f, 0.42f, false, 0.00f, 0.0f, 1.0f, 1, 0.00f, 0.50f, 0.00f },
-    { "Hollow Repeat",     1, 3.5f, 0.35f, 0.65f, 0.25f, 0.22f, 0.45f, false, 0.00f, -0.5f, 1.0f, 2, 0.00f, 0.50f, 0.05f },
-    { "Spectral Dust",     1, 4.5f, 0.42f, 0.70f, 0.20f, 0.38f, 0.35f, true,  0.00f, -0.5f, 1.0f, 1, 0.00f, 0.50f, 0.00f },
+    { "Loop Cleaner",      1, 3.0f, 0.28f, 0.48f, 0.30f, 0.16f, 0.50f, false, 0.00f, 0.0f, 1.0f, 2, 0.00f, 0.50f, 0.10f, false, false, true, false },
+    { "Resonance Memory",  1, 4.0f, 0.40f, 0.55f, 0.22f, 0.28f, 0.42f, false, 0.00f, 0.0f, 1.0f, 1, 0.00f, 0.50f, 0.00f, false, false, false, false },
+    { "Hollow Repeat",     1, 3.5f, 0.35f, 0.65f, 0.25f, 0.22f, 0.45f, false, 0.00f, -0.5f, 1.0f, 2, 0.00f, 0.50f, 0.05f, false, false, true, false },
+    { "Spectral Dust",     1, 4.5f, 0.42f, 0.70f, 0.20f, 0.38f, 0.35f, true,  0.00f, -0.5f, 1.0f, 1, 0.00f, 0.50f, 0.00f, false, false, false, false },
 };
 
 inline constexpr int kNumPresets = static_cast<int> (sizeof (kPresets) / sizeof (kPresets[0]));
@@ -115,10 +116,18 @@ inline void applyPreset (juce::AudioProcessorValueTreeState& apvts, int index) n
     setBoolParam (apvts, constants::idBypass, false);
     setBoolParam (apvts, constants::idGainMatch, false);
 
+    setBoolParam (apvts, constants::idReverbEnabled, pr.reverbEnabled);
     setChoiceParam (apvts, constants::idReverbType, pr.reverbType);
     setFloatParam (apvts, constants::idReverbWet, pr.reverbWet);
+    setBoolParam (apvts, constants::idFormantEnabled, pr.formantEnabled);
     setFloatParam (apvts, constants::idFormant, pr.formant);
+    setBoolParam (apvts, constants::idDeEsserEnabled, pr.deEsserEnabled);
     setFloatParam (apvts, constants::idDeEsser, pr.deEsser);
+
+    setBoolParam (apvts, constants::idHarmonicsEnabled, pr.harmonicsEnabled);
+    setFloatParam (apvts, constants::idScaleColor, 0.0f);
+    setFloatParam (apvts, constants::idScaleTransient, 0.35f);
+    setBoolParam (apvts, constants::idEqEnabled, false);
 
     for (int b = 0; b < constants::eqBandsPerStage; ++b)
     {
@@ -126,6 +135,21 @@ inline void applyPreset (juce::AudioProcessorValueTreeState& apvts, int index) n
         setFloatParam (apvts, constants::kPreEqGainIds[b], 0.0f);
         setFloatParam (apvts, constants::kPostEqFreqIds[b], constants::kDefaultEqFreqs[b]);
         setFloatParam (apvts, constants::kPostEqGainIds[b], 0.0f);
+    }
+
+    for (int b = 0; b < constants::parametricEqBands; ++b)
+    {
+        const auto n = juce::String (b + 1);
+        const auto onId = "eq" + n + "On";
+        const auto soloId = "eq" + n + "Solo";
+        const auto x4Id = "eq" + n + "X4";
+        const auto gainId = "eq" + n + "Gain";
+        const auto freqId = "eq" + n + "Freq";
+        setBoolParam (apvts, onId.toRawUTF8(), false);
+        setBoolParam (apvts, soloId.toRawUTF8(), false);
+        setBoolParam (apvts, x4Id.toRawUTF8(), false);
+        setFloatParam (apvts, gainId.toRawUTF8(), 0.0f);
+        setFloatParam (apvts, freqId.toRawUTF8(), constants::kDefaultParaEqFreqs[b]);
     }
 }
 
