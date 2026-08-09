@@ -7,21 +7,13 @@
 /**
     Canonical AFTERIMAGE tooltip copy.
     First line = title (UPPERCASE control name). Remaining lines = body.
+    ASCII only in user-facing strings.
 */
 namespace afterimage::tooltips
 {
-/** Do not attach to working controls — reserved for truly disabled UI. */
+/** Do not attach to working controls - reserved for truly disabled UI. */
 inline constexpr const char* unavailable =
     "This control is currently unavailable.";
-
-inline constexpr const char* harmonicsColor =
-    "COLOR\n"
-    "How strongly in-key harmonics are accented.\n"
-    "0% is off. Past 100% adds extra in-key resonance.";
-
-inline constexpr const char* harmonicsTransient =
-    "TRANSIENT\n"
-    "Keeps attacks clearer while HARMONICS accents sustained tone.";
 
 inline constexpr const char* afterimage =
     "AFTERIMAGE\n"
@@ -129,39 +121,88 @@ inline constexpr const char* outputMeter =
     "Shows the final audible output after Match, Bypass, and Output Gain.\n"
     "With Match on, this should agree with the dry reference level.";
 
-inline constexpr const char* reverb =
-    "REVERB\n"
-    "Conventional algorithmic reverb after the spectral Mix.\n"
-    "Use a little wet to smooth grainy Shadow tails.";
+inline constexpr const char* tuneEnable =
+    "TUNE ON\n"
+    "Enables automatic monophonic pitch correction.\n"
+    "Off is a pure delay (identity) with the same fixed latency.";
+
+inline constexpr const char* tuneRoot =
+    "ROOT\n"
+    "Tonic pitch-class for scale snapping.";
+
+inline constexpr const char* tuneScale =
+    "SCALE\n"
+    "Target scale. Detected pitch snaps to the nearest in-scale note.";
+
+inline constexpr const char* tuneRetune =
+    "RETUNE\n"
+    "How quickly pitch moves to the target note.\n"
+    "Higher values correct faster.";
+
+inline constexpr const char* tuneHumanize =
+    "HUMANIZE\n"
+    "Softens correction when the note is already close,\n"
+    "preserving natural vibrato and drift.";
+
+inline constexpr const char* tuneAmount =
+    "AMOUNT\n"
+    "How much correction is applied.\n"
+    "0% leaves pitch unchanged (still latency-aligned).";
+
+inline constexpr const char* reverbEnable =
+    "REVERB ON\n"
+    "Enables the post-mix reverb. Off (and Mix 0) is identity.";
 
 inline constexpr const char* reverbWet =
-    "REVERB WET\n"
-    "Blends the post-chain reverb with the dry spectral mix.\n"
-    "0% is off. Modest values smooth Shadow tails.";
+    "REVERB MIX\n"
+    "Equal-power blend of dry signal and reverb return.\n"
+    "0% is off.";
 
 inline constexpr const char* reverbType =
     "REVERB TYPE\n"
-    "Spring, Hall, or Room character for the post-chain reverb.";
+    "Room, Hall, or Spring character.";
+
+inline constexpr const char* reverbSafeBass =
+    "SAFE BASS\n"
+    "High-passes the wet reverb return near 125 Hz (~24 dB/oct).\n"
+    "Dry path stays full range to keep the low end clean.";
+
+inline constexpr const char* formantEnable =
+    "FORMANT ON\n"
+    "Enables true spectral-envelope formant shifting.\n"
+    "Off is identity.";
 
 inline constexpr const char* formant =
     "FORMANT\n"
-    "Shifts vowel-like tone colour from Low to High.\n"
-    "Centre is neutral. Conventional filter-bank colour, not a pitch shifter.";
+    "Warps the spectral envelope (vowel colour) without shifting pitch.\n"
+    "Center is transparent. Low / High move formants.";
+
+inline constexpr const char* deEsserEnable =
+    "DE-ESSER ON\n"
+    "Enables dynamic high-frequency control. Off is identity.";
 
 inline constexpr const char* deEsser =
     "DE-ESSER\n"
     "Reduces harsh high frequencies dynamically.\n"
-    "Intensity only — higher values duck sibilance more.";
+    "Higher values duck sibilance more.";
 
-inline constexpr const char* preEq =
-    "PRE EQ\n"
-    "Shapes the signal entering the reverb.\n"
-    "Four peaking bands with a live spectrum view.";
+inline constexpr const char* eqEnable =
+    "EQ ON\n"
+    "Enables the parametric EQ stage. Off skips EQ processing.";
 
-inline constexpr const char* postEq =
-    "POST EQ\n"
-    "Shapes the reverb return before it blends back.\n"
-    "Four peaking bands with a live spectrum view.";
+inline constexpr const char* eqType =
+    "TYPE\n"
+    "Filter type for the selected band:\n"
+    "Low Pass, High Pass, shelves, Bell, or Notch.";
+
+inline constexpr const char* eqSlope =
+    "SLOPE\n"
+    "Low/High Pass slope: 12 dB or 48 dB per octave.\n"
+    "Hidden for Bell, Shelf, and Notch.";
+
+inline constexpr const char* eqSolo =
+    "SOLO\n"
+    "Auditions only this band exclusively.";
 
 inline constexpr const char* preset =
     "PRESET\n"
@@ -188,7 +229,7 @@ inline constexpr const char* memoryStatus =
     switch (mode)
     {
         case SpectralMode::Erase:  return influenceErase;
-        case SpectralMode::Merge:  // legacy
+        case SpectralMode::Merge:
         case SpectralMode::Shadow: return influenceShadow;
     }
     return influenceShadow;
@@ -199,7 +240,7 @@ inline constexpr const char* memoryStatus =
     switch (mode)
     {
         case SpectralMode::Erase:  return blurErase;
-        case SpectralMode::Merge:  // legacy
+        case SpectralMode::Merge:
         case SpectralMode::Shadow: return blurShadow;
     }
     return blurShadow;
@@ -210,7 +251,7 @@ inline constexpr const char* memoryStatus =
     switch (mode)
     {
         case SpectralMode::Erase:  return erase;
-        case SpectralMode::Merge:  // legacy → present as Shadow
+        case SpectralMode::Merge:
         case SpectralMode::Shadow: return shadow;
     }
     return shadow;

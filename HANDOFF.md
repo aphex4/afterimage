@@ -14,7 +14,7 @@ Marketing version: **1.0.0-rc.1** (CMake/JUCE VersionCode stays `1.0.0` / `0x100
 
 It does **not** use a normal delay or reverb as the core. It runs an **overlap-add STFT**, stores a circular buffer of **spectral frames**, builds a stabilized **SpectralMemoryProfile** (~200 ms Gaussian window) for recall, and lets the live spectrum interact with that memory.
 
-Modes: **Shadow**, **Erase** (Merge removed from product; legacy sessions → Shadow). Optional HARMONICS (scale-aware sweetener — not Autotune), FX (reverb/formant/de-esser with explicit enables), 8-band stereo-linked parametric EQ, four editor pages (MEMORY | HARMONICS | EQ | FX), MATCH in global top bar. Soft Shadow default = spectral core only. Status: **release candidate** — do not claim READY FOR V1.0 without ear audition. See `docs/CLEANUP_AUDIT.md`.
+Modes: **Shadow**, **Erase** (Merge removed from product; legacy sessions → Shadow). Optional **TUNE** (monophonic pitch correction), FX (reverb/formant/de-esser with explicit enables), 8-band stereo-linked parametric EQ, four editor pages (MEMORY | TUNE | EQ | FX), MATCH in global top bar. Soft Shadow default = spectral core only. Status: **release candidate** - do not claim READY FOR V1.0 without ear audition. See `docs/SOUND_REGRESSION_AUDIT.md`.
 
 ---
 
@@ -41,10 +41,11 @@ Current milestone: **1.0.0-rc.1**.
 ```
 Input
   → SpectralEngine / STFT (Shadow / Erase; Merge tests-only)
-  → delay dry by STFT latency
+  → TUNE (always; OFF = pure delay 1024; ON = YIN + OLA correct)
+  → delay dry by STFT + TUNE latency (5120)
   → equal-power Mix
-  → HARMONICS (opt) → Formant (opt) → De-esser (opt)
-  → Reverb wet branch (opt): dry ‖ PreEQ→Verb→PostEQ
+  → Formant (opt) → De-esser (opt)
+  → Reverb (opt): ON / TYPE / MIX / SAFE BASS
   → Parametric EQ (opt)
   → Gain Match → Bypass → entitlement dry → Output Gain
   → Output

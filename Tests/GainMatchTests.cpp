@@ -1,4 +1,5 @@
 #include "PluginProcessor.h"
+#include "DSP/PitchTune.h"
 #include "Utilities/Constants.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
@@ -142,7 +143,7 @@ void configureIdentityWet (AfterimageAudioProcessor& p)
     setBool (p, idBypass, false);
     setBool (p, idFreeze, false);
     setParam (p, idRandomRecall, 0.0f);
-    setBool (p, idHarmonicsEnabled, false);
+    setBool (p, idTuneEnabled, false);
     setBool (p, idFormantEnabled, false);
     setBool (p, idDeEsserEnabled, false);
     setBool (p, idReverbEnabled, false);
@@ -547,13 +548,13 @@ void testOptionalModulesIdentity()
     setParam (p, idFormant, 0.1f);
     setParam (p, idDeEsser, 0.8f);
     setParam (p, idReverbWet, 0.5f);
-    setBool (p, idHarmonicsEnabled, false);
+    setBool (p, idTuneEnabled, false);
     setBool (p, idFormantEnabled, false);
     setBool (p, idDeEsserEnabled, false);
     setBool (p, idReverbEnabled, false);
 
     const int lat = p.getLatencySamples();
-    CHECK (lat == fftSize);
+    CHECK (lat == fftSize + afterimage::PitchTune::getLatencySamples());
 
     // Prime delay lines
     for (int k = 0; k < 40; ++k)
@@ -588,7 +589,7 @@ void testLatencyImpulseMatchesReport()
     setParam (p, idInfluence, 0.0f);
 
     const int lat = p.getLatencySamples();
-    CHECK (lat == fftSize);
+    CHECK (lat == fftSize + afterimage::PitchTune::getLatencySamples());
 
     const int total = lat + 4096;
     juce::AudioBuffer<float> buf (1, total);
@@ -625,7 +626,7 @@ void testDefaultPresetOptionalModulesOff()
     prepareProc (p, 48000.0, 512, 2);
     p.setCurrentProgram (0);
     auto& apvts = p.getAPVTS();
-    CHECK (apvts.getRawParameterValue (idHarmonicsEnabled)->load() < 0.5f);
+    CHECK (apvts.getRawParameterValue (idTuneEnabled)->load() < 0.5f);
     CHECK (apvts.getRawParameterValue (idFormantEnabled)->load() < 0.5f);
     CHECK (apvts.getRawParameterValue (idDeEsserEnabled)->load() < 0.5f);
     CHECK (apvts.getRawParameterValue (idReverbEnabled)->load() < 0.5f);

@@ -1,6 +1,8 @@
 # AFTERIMAGE Effect Engine
 
-Preserves STFT (**4096**/512), latency, phase strategy (current-frame phase by default), parameter IDs, and Influence=0 / Mix=0 / Bypass identity.
+Preserves STFT (**4096**/512), phase strategy (current-frame phase by default), parameter IDs, and Influence=0 / Mix=0 / Bypass identity.
+
+Host latency = STFT (4096) + TUNE fixed delay (1024) = **5120 samples**, whether TUNE is on or off.
 
 ## Product identities
 
@@ -16,23 +18,23 @@ Preserves STFT (**4096**/512), latency, phase strategy (current-frame phase by d
 ```text
 Input
   → SpectralEngine (STFT + Shadow/Erase)
-  → latency-aligned dry delay
+  → TUNE (always; OFF = pure delay of 1024; ON = YIN + OLA pitch correct)
+  → latency-aligned dry delay (4096 + 1024)
   → equal-power Mix
-  → HARMONICS (opt; scale-aware spectral sweetener)
-  → Formant (opt)
+  → Formant (opt; spectral-envelope warp)
   → De-esser (opt)
-  → Reverb: dry ‖ (Pre-EQ → verb → Post-EQ) → wet mix (opt)
+  → Reverb (opt): ON / TYPE / MIX / SAFE BASS
   → Parametric EQ (opt; 8-band stereo-linked)
   → Gain Match (vs latency-aligned dry)
   → Bypass → entitlement dry → Output Gain
   → Output
 ```
 
-Editor pages: **MEMORY | HARMONICS | EQ | FX**. **MATCH** is global.
+**TUNE placement decision:** After SpectralEngine, before Mix. Keeps dry/wet PDC-aligned with a shared fixed Tune latency. Operating on the spectral wet before Mix lets Shadow/Erase ghosts participate in correction without retuning material entering history. Documented in `docs/SOUND_REGRESSION_AUDIT.md`.
 
-Optional modules have explicit enables (`harmonicsEnabled`, `formantEnabled`, `deEsserEnabled`, `reverbEnabled`, `eqEnabled`). When disabled (or reverb wet≈0), processing is skipped / identity.
+Editor pages: **MEMORY | TUNE | EQ | FX**. **MATCH** is global.
 
-Conventional Autotune is **not** on the shipping path (see `docs/HARMONICS_ENGINE.md`, `docs/CLEANUP_AUDIT.md`).
+Optional modules: `tuneEnabled`, `formantEnabled`, `deEsserEnabled`, `reverbEnabled`, `eqEnabled`. HARMONICS (`harmonicsEnabled` / Color / Transient) retained as obsolete params for session compat only — not on the DSP path.
 
 ## Core principle: memory is a short moment
 
@@ -78,14 +80,26 @@ Relative-prominence familiarity with asymmetric attack/release; Blur widens the 
 
 Spectral blur complex-write path retained for unit tests; not selectable in product UI.
 
+## TUNE
+
+Monophonic YIN/NACF detector (~55-1500 Hz) with confidence / voiced gate. Snaps to nearest note in Root+Scale. Retune / Humanize / Amount. Fixed-latency OLA pitch shift (no delay-line read-head jumps). Backs off when confidence is low.
+
+## Formant
+
+Spectral-envelope warp (log-magnitude envelope on log-frequency axis) with fine structure + phase preserved. Center transparent. Not whole-signal pitch shift.
+
+## Reverb
+
+ON, TYPE (Spring/Hall/Room), MIX, SAFE BASS (~125 Hz / ~24 dB/oct HPF on wet return only). Pre-EQ and Post-EQ removed.
+
 ## Debug / stage bypass
 
 - Mode audition: `-DAFTERIMAGE_DEBUG_AUDITION=<n>` (engine-internal).
-- Chain stage bypass: `-DAFTERIMAGE_STAGE_BYPASS=<mask>` bits A–F in `Constants.h` (developer builds).
+- Chain stage bypass: `-DAFTERIMAGE_STAGE_BYPASS=<mask>` bits A–F in `Constants.h` (developer builds). Bit C = Tune disable (delay still runs).
 
 ## Factory presets
 
-Soft Shadow (program 0) = spectral memory core only (optional modules off). Other presets may enable reverb/formant/de-esser intentionally.
+Soft Shadow (program 0) = spectral memory core only (optional modules off). Other presets may enable reverb/formant/de-esser intentionally. Every preset sets module enables explicitly.
 
 ## Gain Match
 

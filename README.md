@@ -5,7 +5,7 @@
 AFTERIMAGE is a real-time spectral memory processor. It continuously analyzes and stores a short history of the signal’s spectral content so the present can interact with its own recent past — producing evolving spectral echoes, ghost harmonics, frequency suppression, and morphing textures.
 
 > **Current milestone: 1.0.0-rc.1 (Release Candidate)**  
-> Not ear-signed-off for final v1.0. Product modes are **Shadow / Erase** (Merge removed; legacy sessions map to Shadow). Optional HARMONICS sweetener, FX (reverb/formant/de-esser), 8-band parametric EQ, Gain Match, four editor pages (MEMORY | HARMONICS | EQ | FX). Conventional Autotune is not shipped.
+> Not ear-signed-off for final v1.0. Product modes are **Shadow / Erase** (Merge removed; legacy sessions map to Shadow). Optional **TUNE** (monophonic pitch correction), FX (reverb/formant/de-esser), 8-band parametric EQ, Gain Match, four editor pages (MEMORY | TUNE | EQ | FX). HARMONICS sweetener removed from shipping path.
 
 ### Versioning choice
 
@@ -22,13 +22,13 @@ Do **not** claim READY FOR V1.0 without DAW ear A/B.
 
 - Overlap-add STFT with host latency + latency-compensated dry/wet
 - Per-channel spectral history; Freeze captures a stabilized recent memory profile
-- **Shadow** — multi-age spectral tail / ghost from diffused memory profiles
-- **Erase** — relative-prominence familiarity carve (repeated content hollows out)
-- **HARMONICS** — optional scale-aware spectral sweetener (not Autotune); MIDI root/chord
-- **FX** — Formant, De-esser, Reverb (Spring/Hall/Room + Pre/Post EQ on wet branch); explicit enables
-- **EQ** — 8-band stereo-linked parametric EQ: Bell/Shelf/Cut/Notch, ×4 slopes, exclusive Solo
-- **Gain Match** — broadband loudness trim of the completed chain vs latency-aligned dry (MATCH in global top bar)
-- Four editor pages: **MEMORY | HARMONICS | EQ | FX**
+- **Shadow** - multi-age spectral tail / ghost from diffused memory profiles
+- **Erase** - relative-prominence familiarity carve (repeated content hollows out)
+- **TUNE** - optional monophonic pitch correction (YIN + fixed-latency shift); Root/Scale/Retune/Humanize/Amount
+- **FX** - Formant (envelope warp), De-esser, Reverb (Spring/Hall/Room + SAFE BASS); explicit enables
+- **EQ** - 8-band stereo-linked parametric EQ: Bell/Shelf/Cut/Notch, SLOPE 12/48 dB on LP/HP, exclusive Solo
+- **Gain Match** - broadband loudness trim of the completed chain vs latency-aligned dry (MATCH in global top bar)
+- Four editor pages: **MEMORY | TUNE | EQ | FX**
 - Factory presets grouped by Shadow / Erase
 - Offline licensing: 14-day trial, signed `.afterimage-license`, compact activation UI
 - Memory Well particle visualization (DSP-seeded)
@@ -43,8 +43,8 @@ Do **not** claim READY FOR V1.0 without DAW ear A/B.
 | STFT (FFT 4096 / hop 512 / Hann) | Analysis & resynthesis |
 | Spectral history + SpectralMemoryProfile | Recall window |
 | Modes | Shadow, Erase (see [docs/EFFECT_ENGINE.md](docs/EFFECT_ENGINE.md)) |
+| TUNE (opt; fixed latency always) | Monophonic pitch correction |
 | Mix | Latency-compensated equal-power dry/wet |
-| HARMONICS (opt) | Scale-aware spectral sweetener |
 | Formant → De-esser → Reverb (opt) | Post-spectral colour / space |
 | Parametric EQ (opt) | 8-band stereo-linked |
 | Gain Match → Bypass → Output | Level match + utility |

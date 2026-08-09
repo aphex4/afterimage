@@ -68,7 +68,7 @@ public:
     static juce::Colour tooltipEdge()    { return juce::Colour (0x668a9bb5); }
 
 private:
-    static constexpr int kTooltipMaxWidth = 300;
+    static constexpr int kTooltipMaxWidth = 340;
     static constexpr int kTooltipPadX = 16;
     static constexpr int kTooltipPadY = 14;
     static constexpr int kTooltipTitleBodyGap = 6;

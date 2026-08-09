@@ -74,27 +74,21 @@ AfterimageAudioProcessorEditor::AfterimageAudioProcessorEditor (AfterimageAudioP
 
     buildPresetMenu();
 
-    auto setupViewBtn = [this] (juce::TextButton& b, EditorView v)
+    addAndMakeVisible (navBar_);
+    navBar_.onPageChanged = [this] (AfterimageNavigationBar::Page page)
     {
-        b.setClickingTogglesState (true);
-        b.setRadioGroupId (0xA1E0);
-        b.onClick = [this, v] { setEditorView (v); };
-        addAndMakeVisible (b);
+        setEditorView (static_cast<EditorView> (page));
     };
-    setupViewBtn (memoryViewBtn, EditorView::Memory);
-    setupViewBtn (harmonicsViewBtn, EditorView::Harmonics);
-    setupViewBtn (eqViewBtn, EditorView::Eq);
-    setupViewBtn (fxViewBtn, EditorView::Fx);
-    memoryViewBtn.setToggleState (true, juce::dontSendNotification);
+    navBar_.setPage (AfterimageNavigationBar::Page::Memory);
 
     addAndMakeVisible (modeSelector);
     addAndMakeVisible (meterDisplay);
     addAndMakeVisible (memoryWell);
     addAndMakeVisible (postChainPanel);
-    addAndMakeVisible (scalePanel);
+    addAndMakeVisible (tunePanel);
     addAndMakeVisible (eqPanel);
     postChainPanel.attach (audioProcessor.getAPVTS());
-    scalePanel.attach (audioProcessor.getAPVTS());
+    tunePanel.attach (audioProcessor.getAPVTS());
     eqPanel.attach (audioProcessor.getAPVTS(), audioProcessor.getParametricEQ());
 
     addAndMakeVisible (freezeButton);
@@ -150,10 +144,7 @@ AfterimageAudioProcessorEditor::~AfterimageAudioProcessorEditor()
 void AfterimageAudioProcessorEditor::setEditorView (EditorView view)
 {
     editorView_ = view;
-    memoryViewBtn.setToggleState (view == EditorView::Memory, juce::dontSendNotification);
-    harmonicsViewBtn.setToggleState (view == EditorView::Harmonics, juce::dontSendNotification);
-    eqViewBtn.setToggleState (view == EditorView::Eq, juce::dontSendNotification);
-    fxViewBtn.setToggleState (view == EditorView::Fx, juce::dontSendNotification);
+    navBar_.setPage (static_cast<AfterimageNavigationBar::Page> (view));
     refreshViewVisibility();
     resized();
     repaint();
@@ -162,7 +153,7 @@ void AfterimageAudioProcessorEditor::setEditorView (EditorView view)
 void AfterimageAudioProcessorEditor::refreshViewVisibility()
 {
     const bool mem = editorView_ == EditorView::Memory;
-    const bool harm = editorView_ == EditorView::Harmonics;
+    const bool tune = editorView_ == EditorView::Tune;
     const bool eq = editorView_ == EditorView::Eq;
     const bool fx = editorView_ == EditorView::Fx;
 
@@ -171,7 +162,7 @@ void AfterimageAudioProcessorEditor::refreshViewVisibility()
     for (auto& k : knobs)
         k->setVisible (mem);
 
-    scalePanel.setVisible (harm);
+    tunePanel.setVisible (tune);
     eqPanel.setVisible (eq);
     postChainPanel.setVisible (fx);
 }
@@ -330,15 +321,11 @@ void AfterimageAudioProcessorEditor::resized()
     presetBox.setBounds (top.removeFromRight (juce::jmin (top.getWidth(), juce::roundToInt (140.0f * scale)))
                              .reduced (0, juce::roundToInt (12.0f * scale)));
 
-    // Large nav: MEMORY | HARMONICS | EQ | FX
+    // Large nav: MEMORY | TUNE | EQ | FX
     area.removeFromTop (6);
     auto nav = area.removeFromTop (navH);
     navBarBounds_ = nav.toFloat();
-    const int tabW = nav.getWidth() / 4;
-    memoryViewBtn.setBounds (nav.removeFromLeft (tabW).reduced (4, 4));
-    harmonicsViewBtn.setBounds (nav.removeFromLeft (tabW).reduced (4, 4));
-    eqViewBtn.setBounds (nav.removeFromLeft (tabW).reduced (4, 4));
-    fxViewBtn.setBounds (nav.reduced (4, 4));
+    navBar_.setBounds (nav);
     area.removeFromTop (10);
 
     dockBounds_ = {};
@@ -379,9 +366,9 @@ void AfterimageAudioProcessorEditor::resized()
             placeGroup (6, 2);
         }
     }
-    else if (editorView_ == EditorView::Harmonics)
+    else if (editorView_ == EditorView::Tune)
     {
-        scalePanel.setBounds (area);
+        tunePanel.setBounds (area);
     }
     else if (editorView_ == EditorView::Eq)
     {
@@ -412,9 +399,9 @@ void AfterimageAudioProcessorEditor::timerCallback()
             memoryWell.setMemoryLengthNorm (norm);
         }
     }
-    else if (editorView_ == EditorView::Harmonics)
+    else if (editorView_ == EditorView::Tune)
     {
-        scalePanel.refreshValueText();
+        tunePanel.refreshValueText();
     }
     else if (editorView_ == EditorView::Eq)
     {
@@ -425,8 +412,6 @@ void AfterimageAudioProcessorEditor::timerCallback()
     }
     else
     {
-        postChainPanel.updateMeters (audioProcessor.getPostReverb().getPreProbe(),
-                                     audioProcessor.getPostReverb().getPostProbe());
         postChainPanel.refreshValueText();
     }
 

@@ -1,31 +1,30 @@
 # Realtime Safety Audit
 
-Post-cleanup status of audio-thread safety.
+Audio-thread rules for AFTERIMAGE `processBlock` / `processChunk`.
 
-## Shipping path (processBlock)
+## Shipping path
 
-| Module | Alloc on audio thread | Locks | Notes |
-|--------|----------------------|-------|-------|
-| SpectralEngine / STFT | No (prepare-only) | No | Preallocated rings |
-| DryWetMixer | No | No | |
-| HARMONICS (`ScaleAccentuator`) | No | No | Stack `BiquadCoeffs`; skip if disabled |
-| FormantShifter | No | No | Stack biquads; skip if disabled |
-| DeEsser | No | No | Stack biquads; skip if disabled |
-| PostChainReverb + FourBandEQ | No | No | Stack biquads; wet branch; skip if disabled & settled |
-| ParametricEQ | No | No | Stack biquads; skip if inactive |
-| Gain Match / Bypass / Out | No | No | |
+| Module | Alloc | Lock/I/O | Notes |
+|--------|-------|----------|-------|
+| SpectralEngine / STFT / history / modes / tail | No | No | Preallocated at prepare |
+| PitchTune (TUNE) | No | No | Preallocated buffers; YIN every hop (amortized), not per-sample O(N²) |
+| FormantShifter | No | No | Preallocated FFT scratch; stack envelope |
+| DeEsser | No | No | Stack `BiquadCoeffs` |
+| PostChainReverb | No | No | JUCE Reverb + stack HPF for SAFE BASS |
+| ParametricEQ | No | No | Stack biquads; spectrum probe preallocated |
+| Gain Match / Mix / Bypass | No | No | Sample-smoothed |
 
-## Removed from shipping path
+## Quarantined / obsolete
 
-| Module | Issue | Status |
-|--------|-------|--------|
-| `AutoTune` | O(N×lag) autocorr spikes; delay-line read jumps; ~20 ms hidden latency | Quarantined header; not called |
-| `IIR::Coefficients::make*` in Formant/DeEsser/FourBandEQ | Heap `Ptr` factories | Replaced with `Biquad.h` |
+| Item | Risk | Status |
+|------|------|--------|
+| `AutoTune.h` | O(N×lag) autocorr spikes; delay-line read jumps; hidden latency | Quarantined header; not called |
+| `ScaleAccentuator` (HARMONICS) | 48 BP × ch × sample | Removed from shipping process path; file retained |
 
 ## Compile-time stage bypass
 
-`-DAFTERIMAGE_STAGE_BYPASS=<mask>` bits A–F (see `Constants.h`) for developer sound regression. Not exposed in commercial UI.
+`-DAFTERIMAGE_STAGE_BYPASS=<mask>` bits A–F (see `Constants.h`) for developer sound regression. Bit C forces TUNE disable (fixed delay still runs). Not exposed in commercial UI.
 
-## Latency
+## Parameter smoothing
 
-Host-reported latency = STFT `fftSize` (4096). All shipping optional modules are zero-delay (IIR). No Autotune delay-line offset.
+Mix, Output, Bypass, Gain Match, Formant, Reverb Mix, Tune enable/amount/ratio use smoothed transitions. Coeff rebuilds for EQ/Tune scale happen on block boundaries from `updateParameterTargets`, not mid-sample heap factories.

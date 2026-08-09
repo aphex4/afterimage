@@ -127,6 +127,18 @@ public:
 
     [[nodiscard]] const SpectrumProbe& getProbe() const noexcept { return probe_; }
 
+    /** Feed pre-EQ analyzer (call before process, even when EQ inactive). */
+    void pushSpectrum (const juce::AudioBuffer<float>& buffer) noexcept
+    {
+        const int n = buffer.getNumSamples();
+        const int chans = buffer.getNumChannels();
+        if (n <= 0 || chans <= 0)
+            return;
+        const float* l = buffer.getReadPointer (0);
+        const float* r = chans > 1 ? buffer.getReadPointer (1) : nullptr;
+        probe_.process (l, r, n);
+    }
+
     [[nodiscard]] bool isActive() const noexcept
     {
         if (! masterEnabled_)
@@ -175,10 +187,6 @@ public:
         const int soloIndex = findSoloBand();
         for (int ch = 0; ch < chans; ++ch)
             processMono (buffer.getWritePointer (ch), n, ch, soloIndex);
-
-        const float* l = buffer.getReadPointer (0);
-        const float* r = chans > 1 ? buffer.getReadPointer (1) : nullptr;
-        probe_.process (l, r, n);
     }
 
 private:

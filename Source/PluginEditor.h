@@ -3,6 +3,7 @@
 #include "PluginProcessor.h"
 #include "UI/AfterimageKnob.h"
 #include "UI/AfterimageLookAndFeel.h"
+#include "UI/AfterimageNavigationBar.h"
 #include "UI/BypassButton.h"
 #include "UI/FreezeButton.h"
 #include "UI/GainMatchButton.h"
@@ -10,7 +11,7 @@
 #include "UI/ModeSelector.h"
 #include "UI/ParametricEqPanel.h"
 #include "UI/PostChainPanel.h"
-#include "UI/ScalePanel.h"
+#include "UI/TunePanel.h"
 #include "UI/SpectrumDisplay.h"
 #include "Utilities/FactoryPresets.h"
 
@@ -33,7 +34,7 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
 
-    enum class EditorView { Memory = 0, Harmonics, Eq, Fx };
+    enum class EditorView { Memory = 0, Tune, Eq, Fx };
     enum class DockGroup { Memory, Spectral, Output };
 
     struct DockItem
@@ -61,10 +62,7 @@ private:
     juce::Label memoryStatusLabel;
     juce::String cachedMemoryStatus_;
     juce::ComboBox presetBox;
-    juce::TextButton memoryViewBtn { "MEMORY" };
-    juce::TextButton harmonicsViewBtn { "HARMONICS" };
-    juce::TextButton eqViewBtn { "EQ" };
-    juce::TextButton fxViewBtn { "FX" };
+    AfterimageNavigationBar navBar_;
 
 #if defined (AFTERIMAGE_ENABLE_LICENSING)
     std::unique_ptr<LicensePanel> licensePanel;
@@ -75,7 +73,7 @@ private:
     SpectrumDisplay meterDisplay;
     MemoryWellComponent memoryWell;
     PostChainPanel postChainPanel;
-    ScalePanel scalePanel;
+    TunePanel tunePanel;
     ParametricEqPanel eqPanel;
 
     FreezeButton freezeButton;

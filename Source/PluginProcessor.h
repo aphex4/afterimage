@@ -10,7 +10,7 @@
 #include "DSP/FormantShifter.h"
 #include "DSP/DeEsser.h"
 #include "DSP/PostChainReverb.h"
-#include "DSP/ScaleAccentuator.h"
+#include "DSP/PitchTune.h"
 #include "DSP/ScaleTheory.h"
 #include "DSP/ParametricEQ.h"
 #include "DSP/VisualizationAtomics.h"
@@ -30,11 +30,9 @@
 
     Routing:
       INPUT → SPECTRAL MEMORY → latency-aligned dry/wet Mix
-            → HARMONICS (opt) → FORMANT (opt) → DE-ESSER (opt)
-            → REVERB wet branch (opt) → PARAMETRIC EQ (opt)
+            → TUNE (opt, fixed latency always) → FORMANT (opt) → DE-ESSER (opt)
+            → REVERB (opt) → PARAMETRIC EQ (opt)
             → GAIN MATCH → BYPASS → OUTPUT GAIN → OUTPUT
-
-    Conventional Autotune is not on the shipping path (see docs/CLEANUP_AUDIT.md).
 */
 class AfterimageAudioProcessor : public juce::AudioProcessor
 {
@@ -114,10 +112,10 @@ private:
     afterimage::ParameterSmoother smoothers;
     afterimage::DryWetMixer dryWetMixer;
     afterimage::GainMatchController gainMatch_;
+    afterimage::PitchTune tune_;
     afterimage::FormantShifter formant_;
     afterimage::DeEsser deEsser_;
     afterimage::PostChainReverb postReverb_;
-    afterimage::ScaleAccentuator harmonics_;
     afterimage::ParametricEQ parametricEq_;
 
     juce::AudioBuffer<float> inputScratch;
@@ -144,15 +142,22 @@ private:
     std::atomic<float>* pGainMatch = nullptr;
     std::atomic<float>* pReverbType = nullptr;
     std::atomic<float>* pReverbWet = nullptr;
+    std::atomic<float>* pReverbSafeBass = nullptr;
     std::atomic<float>* pFormant = nullptr;
     std::atomic<float>* pDeEsser = nullptr;
-    std::atomic<float>* pHarmonicsEnabled = nullptr;
+    std::atomic<float>* pTuneEnabled = nullptr;
     std::atomic<float>* pFormantEnabled = nullptr;
     std::atomic<float>* pDeEsserEnabled = nullptr;
     std::atomic<float>* pReverbEnabled = nullptr;
     std::atomic<float>* pEqEnabled = nullptr;
     std::atomic<float>* pScaleRoot = nullptr;
     std::atomic<float>* pScaleType = nullptr;
+    std::atomic<float>* pRetune = nullptr;
+    std::atomic<float>* pHumanize = nullptr;
+    std::atomic<float>* pTuneAmount = nullptr;
+
+    // Obsolete params kept bound for session restore only.
+    std::atomic<float>* pHarmonicsEnabled = nullptr;
     std::atomic<float>* pScaleColor = nullptr;
     std::atomic<float>* pScaleTransient = nullptr;
 

@@ -30,7 +30,7 @@ struct Preset
     float reverbWet;
     float formant;           // 0.5 = centre
     float deEsser;
-    bool  harmonicsEnabled;
+    bool  tuneEnabled;
     bool  formantEnabled;
     bool  deEsserEnabled;
     bool  reverbEnabled;
@@ -119,12 +119,17 @@ inline void applyPreset (juce::AudioProcessorValueTreeState& apvts, int index) n
     setBoolParam (apvts, constants::idReverbEnabled, pr.reverbEnabled);
     setChoiceParam (apvts, constants::idReverbType, pr.reverbType);
     setFloatParam (apvts, constants::idReverbWet, pr.reverbWet);
+    setBoolParam (apvts, constants::idReverbSafeBass, false);
     setBoolParam (apvts, constants::idFormantEnabled, pr.formantEnabled);
     setFloatParam (apvts, constants::idFormant, pr.formant);
     setBoolParam (apvts, constants::idDeEsserEnabled, pr.deEsserEnabled);
     setFloatParam (apvts, constants::idDeEsser, pr.deEsser);
 
-    setBoolParam (apvts, constants::idHarmonicsEnabled, pr.harmonicsEnabled);
+    setBoolParam (apvts, constants::idTuneEnabled, pr.tuneEnabled);
+    setFloatParam (apvts, constants::idRetune, 0.55f);
+    setFloatParam (apvts, constants::idHumanize, 0.35f);
+    setFloatParam (apvts, constants::idTuneAmount, 1.0f);
+    setBoolParam (apvts, constants::idHarmonicsEnabled, false);
     setFloatParam (apvts, constants::idScaleColor, 0.0f);
     setFloatParam (apvts, constants::idScaleTransient, 0.35f);
     setBoolParam (apvts, constants::idEqEnabled, false);

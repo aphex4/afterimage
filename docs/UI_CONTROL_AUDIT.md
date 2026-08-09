@@ -1,6 +1,6 @@
 # UI Control Audit
 
-Maps every user-visible control after the cleanup rebuild.
+Maps every user-visible control after Phase 2 sound restoration.
 
 ## Global top bar
 
@@ -15,9 +15,9 @@ Maps every user-visible control after the cleanup rebuild.
 | MATCH | `gainMatch` | Global |
 | POWER | `bypass` | Global |
 
-## Nav (large)
+## Nav (premium glass)
 
-MEMORY | HARMONICS | EQ | FX
+MEMORY | TUNE | EQ | FX
 
 ## MEMORY
 
@@ -27,17 +27,18 @@ MEMORY | HARMONICS | EQ | FX
 | FREEZE | `freeze` | Yes |
 | MEMORY, FORGET, INFLUENCE, BLUR, TRANSIENT, RANDOM, MIX, OUTPUT | matching IDs | Yes |
 
-## HARMONICS
+## TUNE
 
 | Control | Param | Works |
 |---------|-------|-------|
-| ON | `harmonicsEnabled` | Yes — off = identity |
+| ON | `tuneEnabled` | Yes — off = pure delay identity |
 | Root | `scaleRoot` | Yes |
 | Scale | `scaleType` | Yes |
-| COLOR | `scaleColor` | Yes |
-| TRANSIENT | `scaleTransient` | Yes |
+| RETUNE | `retune` | Yes |
+| HUMANIZE | `humanize` | Yes |
+| AMOUNT | `tuneAmount` | Yes |
 
-No Autotune / Retune / Humanize. No `unavailable` tooltips on live controls.
+Obsolete HARMONICS params (`harmonicsEnabled`, `scaleColor`, `scaleTransient`) remain in APVTS for session compat only — no UI.
 
 ## EQ
 
@@ -45,19 +46,20 @@ No Autotune / Retune / Humanize. No `unavailable` tooltips on live controls.
 |---------|-------|-------|
 | ON | `eqEnabled` | Yes — skips stage |
 | Band 1–8 select | — | Yes |
-| Band ON | `eqNOn` | Yes |
-| Solo S | `eqNSolo` | Yes — exclusive |
-| Type / Freq / Gain / Q | `eqN*` | Yes |
-| x4 | `eqNX4` | Yes — **one** control for selected band |
-
-Channel modes Stereo/LR/MS **removed** (stereo-linked only).
+| Band ON | `eqNOn` | Yes (chip) |
+| SOLO | `eqNSolo` | Yes — exclusive (chip) |
+| TYPE / FREQ / GAIN / Q | `eqN*` | Yes |
+| SLOPE | `eqNX4` | Yes — 12 dB / 48 dB for LP/HP only; hidden otherwise |
+| Spectrum | — | Always-live pre-EQ probe (FFT 2048, Hann, overlap, dB -90..0) |
 
 ## FX
 
 | Control | Param | Works |
 |---------|-------|-------|
 | Reverb ON | `reverbEnabled` | Yes |
-| Type / Wet | `reverbType` / `reverbWet` | Yes; wet≈0 identity |
-| Pre/Post EQ | `preEq*` / `postEq*` | Wet branch only |
-| Formant ON + slider | `formantEnabled` / `formant` | Yes |
+| TYPE / MIX | `reverbType` / `reverbWet` | Yes; Mix 0 identity |
+| SAFE BASS | `reverbSafeBass` | Yes — HPF wet ~125 Hz |
+| Formant ON + slider | `formantEnabled` / `formant` | Yes — envelope warp; Center transparent |
 | De-Esser ON + intensity | `deEsserEnabled` / `deEsser` | Yes |
+
+Pre-EQ / Post-EQ UI and active DSP removed (obsolete `preEq*` / `postEq*` IDs retained for session compat).
