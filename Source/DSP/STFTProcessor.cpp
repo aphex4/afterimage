@@ -1,4 +1,5 @@
 #include "STFTProcessor.h"
+#include "../Utilities/DebugSafety.h"
 
 #include <cmath>
 
@@ -144,12 +145,38 @@ void STFTProcessor::process (juce::AudioBuffer<float>& buffer) noexcept
             ch.inRing[static_cast<size_t> (ch.pos)] = data[s];
 
             const int phase = ch.pos % hopSize;
-            const float out = ch.outRing[static_cast<size_t> (ch.pos)]
-                            * wolaScaleTable_[static_cast<size_t> (phase)];
+            float out = ch.outRing[static_cast<size_t> (ch.pos)]
+                      * wolaScaleTable_[static_cast<size_t> (phase)];
             ch.outRing[static_cast<size_t> (ch.pos)] = 0.0f;
+
+            // Emergency ceiling only (~+6 dBFS). Not a mastering limiter.
+            constexpr float kEmergencyCeiling = 2.0f;
+            if (! std::isfinite (out))
+            {
+                out = 0.0f;
+#if JUCE_DEBUG
+                debug::safetyCounters().nonFiniteBins.fetch_add (1, std::memory_order_relaxed);
+#endif
+            }
+            else if (out > kEmergencyCeiling || out < -kEmergencyCeiling)
+            {
+                out = juce::jlimit (-kEmergencyCeiling, kEmergencyCeiling, out);
+#if JUCE_DEBUG
+                debug::safetyCounters().emergencyCeilingHits.fetch_add (1, std::memory_order_relaxed);
+#endif
+            }
+
             data[s] = ch.primed ? out : 0.0f;
 
-            jassert (std::isfinite (data[s]));
+#if JUCE_DEBUG
+            {
+                const float peak = std::abs (data[s]);
+                auto& counters = debug::safetyCounters();
+                const float prev = counters.lastStagePeak.load (std::memory_order_relaxed);
+                if (peak > prev)
+                    counters.lastStagePeak.store (peak, std::memory_order_relaxed);
+            }
+#endif
 
             ch.pos = (ch.pos + 1) % fftSize;
         }

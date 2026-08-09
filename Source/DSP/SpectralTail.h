@@ -6,6 +6,12 @@
 #include <cstdint>
 #include <vector>
 
+// Experimental only — production Shadow uses read-only multi-tap memory (fede4e7).
+// Default OFF: no per-bin random phase scatter on any residual SpectralTail path.
+#if ! defined (AFTERIMAGE_EXPERIMENTAL_PHASE_DIFFUSION)
+    #define AFTERIMAGE_EXPERIMENTAL_PHASE_DIFFUSION 0
+#endif
+
 namespace afterimage
 {
 
@@ -22,8 +28,9 @@ struct SpectralTailParams
 };
 
 /**
-    Per-bin spectral feedback accumulator with phase-vocoder ghost phase.
+    LEGACY / experimental: per-bin spectral feedback accumulator.
 
+    Not used on the production Shadow path after sound-recovery Stage 2.
     Sized in prepare(); processHop is RT-safe (no alloc / locks / I/O).
 */
 class SpectralTail

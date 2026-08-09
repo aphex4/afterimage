@@ -42,7 +42,7 @@ struct Preset
 */
 inline constexpr Preset kPresets[] = {
     // --- Shadow (core-first; reverb only when intentionally enabled) ---
-    { "Soft Shadow",       0, 3.0f, 0.40f, 0.50f, 0.25f, 0.22f, 0.35f, false, 0.00f, 0.0f, 1.0f, 1, 0.00f, 0.50f, 0.00f, false, false, false, false },
+    { "Soft Shadow",       0, 3.0f, 0.40f, 0.38f, 0.30f, 0.20f, 0.35f, false, 0.00f, 0.0f, 1.0f, 1, 0.00f, 0.50f, 0.00f, false, false, false, false },
     { "Spectral Hall",     0, 5.5f, 0.52f, 0.58f, 0.18f, 0.48f, 0.40f, false, 0.00f, 0.0f, 1.0f, 1, 0.22f, 0.50f, 0.00f, false, false, false, true },
     { "Vocal Afterglow",   0, 3.2f, 0.35f, 0.52f, 0.28f, 0.22f, 0.55f, false, 0.00f, 0.0f, 1.0f, 2, 0.10f, 0.55f, 0.15f, false, true, true, true },
     { "Memory Delay",      0, 4.0f, 0.62f, 0.55f, 0.22f, 0.10f, 0.32f, false, 0.00f, 0.0f, 1.0f, 0, 0.08f, 0.50f, 0.00f, false, false, false, true },

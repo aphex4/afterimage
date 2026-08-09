@@ -10,16 +10,16 @@ namespace afterimage
 namespace constants
 {
     // -------------------------------------------------------------------------
-    // STFT configuration
+    // STFT configuration (sound-recovery: proven Phase-2 2048 / hop 512 / 4×)
     // -------------------------------------------------------------------------
-    constexpr int    fftOrder           = 12;          // 2^12 = 4096
+    constexpr int    fftOrder           = 11;          // 2^11 = 2048
     constexpr int    fftSize            = 1 << fftOrder;
-    constexpr int    hopSize            = 512;         // 8x overlap
+    constexpr int    hopSize            = 512;         // 4x overlap
     constexpr int    overlapFactor      = fftSize / hopSize;
     constexpr int    numBins            = fftSize / 2 + 1;
 
     // Incoherent OLA loses sqrt(R) of amplitude vs coherent content at the same magnitude.
-    // Apply to randomised / independently-propagated tail only — never the dry path.
+    // Experimental / gated paths only — never the dry or production Shadow path.
     inline const float incoherentOlaCompensation = std::sqrt (static_cast<float> (overlapFactor));
 
     // -------------------------------------------------------------------------
@@ -29,16 +29,16 @@ namespace constants
     constexpr float  memoryLengthMaxSec = 10.0f;
     constexpr float  memoryLengthDefaultSec = 3.0f;
 
-    // Fresh-instance APVTS defaults (Soft Shadow). Saved sessions keep their stored values.
-    constexpr float  influenceDefault = 0.50f; // was 0.40 — stronger demo without maxing the dial
-    constexpr float  blurDefault      = 0.22f; // was 0.12 — Soft Shadow wash audible immediately
+    // Fresh-instance APVTS defaults (conservative Soft Shadow for v1 recovery).
+    constexpr float  influenceDefault = 0.38f;
+    constexpr float  blurDefault      = 0.20f;
 
     // Stabilized memory-profile window (internal — not a user parameter).
-    // Hop 512 @ 44.1 kHz ≈ 11.6 ms/frame → 90 ms ≈ 8 frames.
-    constexpr float  memoryProfileWindowMs    = 90.0f;
+    // Hop 512 @ 44.1 kHz ≈ 11.6 ms/frame → 200 ms ≈ 17 frames.
+    constexpr float  memoryProfileWindowMs    = 200.0f;
     constexpr float  memoryProfileMaxWindowMs = 280.0f;
     constexpr float  freezeCaptureWindowMs    = 200.0f;
-    constexpr float  freezeCrossfadeMs        = 100.0f; // 50–150 ms range
+    constexpr float  freezeCrossfadeMs        = 100.0f; // 75–150 ms range
 
     // -------------------------------------------------------------------------
     // Spectral blur

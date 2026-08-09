@@ -33,6 +33,7 @@ void SpectralEngine::prepare (double sampleRate, int maxBlockSize, int numChanne
     workingFrame_.prepare (constants::numBins);
     analysisForHistory_.prepare (constants::numBins);
     frameSmoothers_.prepareFrameSmoothers (sampleRate);
+    tapProfileScratch_.prepare (constants::numBins, sampleRate, stft_.getHopSize());
 
     histories_.clear();
     histories_.reserve (static_cast<std::size_t> (numChannels_));
@@ -59,6 +60,7 @@ void SpectralEngine::prepare (double sampleRate, int maxBlockSize, int numChanne
             static_cast<std::size_t> (constants::numBins), 0.0f);
     }
 
+    modes_.setTapProfileScratch (&tapProfileScratch_);
     stft_.setSpectrumCallback (&SpectralEngine::spectrumCallback, this);
     clearHistoryRequested_.store (false, std::memory_order_relaxed);
     prepared_ = true;
@@ -204,13 +206,13 @@ bool SpectralEngine::historyReadyForFreezeCapture() const noexcept
     if (histories_.empty() || sampleRate_ <= 0.0)
         return false;
 
-    // Ready once we have at least a short stabilized window (~90 ms); capture still
+    // Ready once we have enough frames to start a stable capture; capture still
     // aggregates up to freezeCaptureWindowMs when more history is available.
     const float hopMs = 1000.0f * static_cast<float> (stft_.getHopSize())
                         / static_cast<float> (sampleRate_);
+    constexpr float kReadyWindowMs = 100.0f; // arm threshold (capture window remains ~200 ms)
     const int minFrames = std::max (
-        1, static_cast<int> (std::lround (constants::memoryProfileWindowMs
-                                          / std::max (1.0e-3f, hopMs))));
+        1, static_cast<int> (std::lround (kReadyWindowMs / std::max (1.0e-3f, hopMs))));
 
     constexpr float kMinCaptureRms = 1.0e-5f;
     bool anyEnergy = false;
@@ -490,16 +492,18 @@ void SpectralEngine::onSpectrum (float* interleavedFftData, int fftSize, int cha
 
         if (wroteSpectrum)
         {
-            if (modes_.wantsComplexWrite())
+            // Production Shadow uses current-phase magnitude writeback.
+            // PropagatedGhostPhase remains available for experiments only (default OFF).
+            if (currentMode_ == SpectralMode::Shadow
+                && modes_.getShadowPhaseMode() == ShadowPhaseMode::PropagatedGhostPhase)
             {
-                writeInterleavedWithTail (interleavedFftData,
-                                          fftSize,
-                                          workingFrame_.magnitudes.data(),
-                                          workingFrame_.phases.data(),
-                                          modes_.getComplexWriteMagnitudes (channelIndex),
-                                          modes_.getComplexWritePhases (channelIndex),
-                                          modes_.getComplexWriteGain(),
-                                          numBins);
+                writeInterleavedAdditiveGhost (interleavedFftData,
+                                               fftSize,
+                                               workingFrame_.magnitudes.data(),
+                                               workingFrame_.phases.data(),
+                                               modes_.getLastShadowTail(),
+                                               modes_.getGhostPhases (channelIndex),
+                                               numBins);
             }
             else
             {
