@@ -100,6 +100,15 @@ namespace constants
     constexpr int    spectrumProbeFftOrder = 11; // 2048 (UI analyzer; 4096 optional via define)
     constexpr int    eqBandsPerStage     = 4;
 
+    // Sound-recovery Stage 1: hard-remove aux DSP from the production path.
+    // Not "mix=0" — Tune / Formant / De-Esser / Reverb / EQ are compiled out of
+    // processChunk and do not contribute latency. Re-enable only after Stage 9
+    // isolated validation (`-DAFTERIMAGE_ENABLE_AUX_DSP=1`).
+#if ! defined (AFTERIMAGE_ENABLE_AUX_DSP)
+    #define AFTERIMAGE_ENABLE_AUX_DSP 0
+#endif
+    constexpr bool auxDspEnabled = (AFTERIMAGE_ENABLE_AUX_DSP != 0);
+
     // Compile-time stage bypass for sound regression (OR bits; not a commercial UI).
     // A=1 SpectralEngine  B=2 Force Mix dry  C=4 Tune
     // D=8 Formant/DeEsser/Reverb  E=16 Parametric EQ  F=32 Gain Match
