@@ -2,6 +2,7 @@
 
 #include "AfterimageFonts.h"
 #include "AfterimageLookAndFeel.h"
+#include "../Utilities/Constants.h"
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
@@ -32,6 +33,13 @@ public:
             addAndMakeVisible (b);
         }
         buttons_[0].setToggleState (true, juce::dontSendNotification);
+
+        // Sound-recovery: hide unproven aux pages (no fake knobs in v1.0).
+        if (! afterimage::constants::auxDspEnabled)
+        {
+            for (int i = 1; i < 4; ++i)
+                buttons_[static_cast<size_t> (i)].setVisible (false);
+        }
     }
 
     std::function<void (Page)> onPageChanged;
@@ -66,9 +74,14 @@ public:
     void resized() override
     {
         auto area = getLocalBounds().reduced (6, 4);
-        const int w = area.getWidth() / 4;
+        const int visible = afterimage::constants::auxDspEnabled ? 4 : 1;
+        const int w = area.getWidth() / juce::jmax (1, visible);
         for (int i = 0; i < 4; ++i)
+        {
+            if (! buttons_[static_cast<size_t> (i)].isVisible())
+                continue;
             buttons_[static_cast<size_t> (i)].setBounds (area.removeFromLeft (w).reduced (3, 2));
+        }
     }
 
 private:

@@ -123,6 +123,8 @@ private:
     std::vector<SpectralMemoryProfile> liveProfiles_;
     std::vector<SpectralMemoryProfile> frozenProfiles_;
     std::vector<SpectralMemoryProfile> effectiveProfiles_;
+    /** Scratch for Shadow multi-age taps (prepared with engine SR; no audio-thread alloc). */
+    SpectralMemoryProfile tapProfileScratch_;
 
     std::vector<std::vector<float>> previousMagnitudes_;
     std::vector<bool> hasPreviousFrame_;

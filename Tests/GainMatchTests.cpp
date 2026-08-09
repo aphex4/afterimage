@@ -554,7 +554,9 @@ void testOptionalModulesIdentity()
     setBool (p, idReverbEnabled, false);
 
     const int lat = p.getLatencySamples();
-    CHECK (lat == fftSize + afterimage::PitchTune::getLatencySamples());
+    const int expectedLat = fftSize
+        + (afterimage::constants::auxDspEnabled ? afterimage::PitchTune::getLatencySamples() : 0);
+    CHECK (lat == expectedLat);
 
     // Prime delay lines
     for (int k = 0; k < 40; ++k)
@@ -589,7 +591,9 @@ void testLatencyImpulseMatchesReport()
     setParam (p, idInfluence, 0.0f);
 
     const int lat = p.getLatencySamples();
-    CHECK (lat == fftSize + afterimage::PitchTune::getLatencySamples());
+    const int expectedLat = fftSize
+        + (afterimage::constants::auxDspEnabled ? afterimage::PitchTune::getLatencySamples() : 0);
+    CHECK (lat == expectedLat);
 
     const int total = lat + 4096;
     juce::AudioBuffer<float> buf (1, total);

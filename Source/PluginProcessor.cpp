@@ -349,7 +349,9 @@ void AfterimageAudioProcessor::prepareToPlay (double sampleRate, int samplesPerB
     postReverb_.prepare (sampleRate, maxChunk_, maxChannels_);
     parametricEq_.prepare (sampleRate, maxChunk_, maxChannels_);
 
-    const int latency = engine.getLatencySamples() + afterimage::PitchTune::getLatencySamples();
+    int latency = engine.getLatencySamples();
+    if constexpr (afterimage::constants::auxDspEnabled)
+        latency += afterimage::PitchTune::getLatencySamples();
     dryWetMixer.prepare (maxChannels_, maxChunk_, latency);
     setLatencySamples (latency);
 
@@ -413,12 +415,14 @@ void AfterimageAudioProcessor::updateParameterTargets()
                                         pRandomRecall->load(),
                                         pFreeze->load() > 0.5f);
 
-    const bool revOn = pReverbEnabled->load() > 0.5f;
-    const bool formOn = pFormantEnabled->load() > 0.5f;
-    const bool deOn = pDeEsserEnabled->load() > 0.5f;
-    const bool tuneOn = pTuneEnabled->load() > 0.5f
+    // Stage 1 recovery: aux path is hard-off regardless of APVTS / session state.
+    constexpr bool aux = afterimage::constants::auxDspEnabled;
+    const bool revOn = aux && pReverbEnabled->load() > 0.5f;
+    const bool formOn = aux && pFormantEnabled->load() > 0.5f;
+    const bool deOn = aux && pDeEsserEnabled->load() > 0.5f;
+    const bool tuneOn = aux && pTuneEnabled->load() > 0.5f
                         && (afterimage::constants::stageBypassMask & afterimage::constants::stageBypassTune) == 0;
-    const bool eqOn = pEqEnabled->load() > 0.5f;
+    const bool eqOn = aux && pEqEnabled->load() > 0.5f;
 
     postReverb_.setEnabled (revOn);
     formant_.setEnabled (formOn);
@@ -500,8 +504,10 @@ void AfterimageAudioProcessor::processChunk (juce::AudioBuffer<float>& wetChunk,
         engine.process (wetChunk);
     // else: leave wet as input copy (identity STFT bypass for regression)
 
-    // TUNE always runs for fixed latency (OFF = pure delay). Bit C forces disable in updateParameterTargets.
+#if AFTERIMAGE_ENABLE_AUX_DSP
+    // TUNE always runs for fixed latency when aux is enabled (OFF = pure delay).
     tune_.process (wetChunk);
+#endif
 
     dryWetMixer.processDryDelay (dryInChunk, delayedDryChunk);
 
@@ -521,6 +527,7 @@ void AfterimageAudioProcessor::processChunk (juce::AudioBuffer<float>& wetChunk,
         }
     }
 
+#if AFTERIMAGE_ENABLE_AUX_DSP
     if ((bypass & afterimage::constants::stageBypassFx) == 0)
     {
         formant_.process (wetChunk);
@@ -533,6 +540,12 @@ void AfterimageAudioProcessor::processChunk (juce::AudioBuffer<float>& wetChunk,
 
     if ((bypass & afterimage::constants::stageBypassEq) == 0)
         parametricEq_.process (wetChunk);
+#else
+    // Spectrum probe still useful for UI even when EQ DSP is disabled.
+    parametricEq_.pushSpectrum (wetChunk);
+    juce::ignoreUnused (afterimage::constants::stageBypassFx,
+                        afterimage::constants::stageBypassEq);
+#endif
 
     const bool bypassMatch = (bypass & afterimage::constants::stageBypassGainMatch) != 0;
 

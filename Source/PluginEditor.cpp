@@ -143,6 +143,8 @@ AfterimageAudioProcessorEditor::~AfterimageAudioProcessorEditor()
 
 void AfterimageAudioProcessorEditor::setEditorView (EditorView view)
 {
+    if (! afterimage::constants::auxDspEnabled)
+        view = EditorView::Memory;
     editorView_ = view;
     navBar_.setPage (static_cast<AfterimageNavigationBar::Page> (view));
     refreshViewVisibility();
@@ -152,10 +154,11 @@ void AfterimageAudioProcessorEditor::setEditorView (EditorView view)
 
 void AfterimageAudioProcessorEditor::refreshViewVisibility()
 {
-    const bool mem = editorView_ == EditorView::Memory;
-    const bool tune = editorView_ == EditorView::Tune;
-    const bool eq = editorView_ == EditorView::Eq;
-    const bool fx = editorView_ == EditorView::Fx;
+    const bool aux = afterimage::constants::auxDspEnabled;
+    const bool mem = editorView_ == EditorView::Memory || ! aux;
+    const bool tune = aux && editorView_ == EditorView::Tune;
+    const bool eq = aux && editorView_ == EditorView::Eq;
+    const bool fx = aux && editorView_ == EditorView::Fx;
 
     memoryWell.setVisible (mem);
     freezeButton.setVisible (mem);

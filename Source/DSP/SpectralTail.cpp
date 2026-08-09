@@ -135,7 +135,9 @@ void SpectralTail::processHop (int channelIndex,
     }
 
     constexpr float twoPi = 6.28318530717958647692f;
+#if AFTERIMAGE_EXPERIMENTAL_PHASE_DIFFUSION
     constexpr float pi = 3.14159265358979323846f;
+#endif
     const float fft = static_cast<float> (constants::fftSize);
     const float hop = static_cast<float> (hopSize_);
     const bool hadPrev = hasPrevPhase_[ch];
@@ -206,12 +208,15 @@ void SpectralTail::processHop (int channelIndex,
         gphase[i] = princarg (gphase[i] + omega * detune);
 
         float offset = 0.0f;
+#if AFTERIMAGE_EXPERIMENTAL_PHASE_DIFFUSION
         if (params.diffusion > 1.0e-4f)
             offset = params.diffusion * pi * nextGaussianApprox (rng) * 2.0f;
+#endif
 
         rphase[i] = princarg (gphase[i] + offset);
     }
 
+#if AFTERIMAGE_EXPERIMENTAL_PHASE_DIFFUSION
     // Cross-bin constant-Q diffusion on power (compounds across hops).
     if (params.spectralDiffusion > 1.0e-4f
         && static_cast<int> (diffuseScratch_.size()) >= numBins_
@@ -227,6 +232,7 @@ void SpectralTail::processHop (int channelIndex,
             pow[i] = pow[i] * (1.0f - s) + diffuseScratch_[i] * s;
         }
     }
+#endif
 
     for (int k = 0; k < numBins_; ++k)
     {

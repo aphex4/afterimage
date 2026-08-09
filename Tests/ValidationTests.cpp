@@ -8,6 +8,7 @@
 #include "DSP/STFTProcessor.h"
 #include "DSP/SpectralFrame.h"
 #include "Utilities/Constants.h"
+#include "Utilities/DebugSafety.h"
 #include "SpectralFixtures.h"
 #include "EffectStrengthMeasure.h"
 
@@ -313,49 +314,41 @@ static void testFreezeProfileCaptureAndLimiter()
     CHECK (mags[50] > 0.1f);
     CHECK (std::isfinite (mags[50]));
 
-    // Shadow SpectralTail: low Forget sustains longer after input stops
+    // Multi-tap Shadow: low Forget keeps more older-memory energy than high Forget
     SpectralModeProcessor modes;
     modes.prepare (constants::numBins, sr, 1);
     std::vector<float> destLow ((size_t) constants::numBins, 0.0f);
     std::vector<float> destHigh ((size_t) constants::numBins, 0.0f);
     ModeParams p;
     p.influence = 1.0f;
-    p.recallAge01 = 0.2f;
-    p.recallPosition = 0.0f;
+    p.recallAge01 = 0.55f;
+    p.recallPosition = 0.55f;
     p.memoryLengthSeconds = 4.0f;
     p.blur = 0.0f;
-    p.forget = 0.1f;
     p.transientPreserve = 0.0f;
 
-    auto warmAndRing = [&] (float forget, std::vector<float>& dest)
+    auto runForget = [&] (float forget, std::vector<float>& dest)
     {
         modes.reset();
         p.forget = forget;
-        std::vector<float> silence ((size_t) constants::numBins, 0.0f);
-        for (int hop = 0; hop < 96; ++hop)
-        {
-            dest.assign ((size_t) constants::numBins, 0.05f);
-            modes.applyShadowMagnitudes (dest.data(), stabilized.getMagnitudes(),
-                                         constants::numBins, p, 0);
-        }
-        for (int hop = 0; hop < 48; ++hop)
-        {
-            dest = silence;
-            modes.applyShadowMagnitudes (dest.data(), silence.data(),
-                                         constants::numBins, p, 0);
-        }
+        dest.assign ((size_t) constants::numBins, 0.02f);
+        modes.applyShadowMagnitudes (dest.data(), stabilized.getMagnitudes(),
+                                     constants::numBins, p, 0);
     };
 
-    warmAndRing (0.1f, destLow);
-    warmAndRing (0.9f, destHigh);
+    runForget (0.1f, destLow);
+    runForget (0.9f, destHigh);
     double eLow = 0.0, eHigh = 0.0;
     for (int i = 0; i < constants::numBins; ++i)
     {
-        eLow += (double) destLow[(size_t) i] * destLow[(size_t) i];
-        eHigh += (double) destHigh[(size_t) i] * destHigh[(size_t) i];
+        // Ghost contribution ≈ out - dry current
+        const float gLow = std::max (0.0f, destLow[(size_t) i] - 0.02f);
+        const float gHigh = std::max (0.0f, destHigh[(size_t) i] - 0.02f);
+        eLow += (double) gLow * gLow;
+        eHigh += (double) gHigh * gHigh;
         CHECK (std::isfinite (destLow[(size_t) i]));
     }
-    CHECK (eLow > eHigh * 1.05); // longer RT60 retains more after silence
+    CHECK (eLow > eHigh * 1.05); // low Forget retains more recalled energy
     CHECK (eLow > 0.0);
 
     // Engine Freeze capture + crossfade
@@ -1150,6 +1143,84 @@ static void testEngineShadowAudibleVsIdentity()
 }
 
 //==============================================================================
+static void testShadowSpikeAndNoiseGrowth()
+{
+    std::cout << "Shadow spike + noise-growth safety...\n";
+    using namespace afterimage;
+
+#if JUCE_DEBUG
+    debug::safetyCounters().reset();
+#endif
+
+    SpectralEngine engine;
+    engine.prepare (48000.0, 512, 2);
+    engine.setMode (SpectralMode::Shadow);
+    engine.setActiveMemoryLengthSeconds (3.0f);
+    engine.setSpectralParameterTargets (0.85f, 0.45f, 0.30f, 0.20f, 0.35f, 0.0f, false);
+    engine.snapSpectralSmoothersToTargets();
+
+    // Impulse-like spikes into a quiet bed — must not explode.
+    juce::AudioBuffer<float> buf (2, 48000);
+    for (int i = 0; i < buf.getNumSamples(); ++i)
+    {
+        float s = 0.05f * (float) std::sin (2.0 * juce::MathConstants<double>::pi * 220.0
+                                            * (double) i / 48000.0);
+        if ((i % 4000) == 0)
+            s += 0.95f;
+        buf.setSample (0, i, s);
+        buf.setSample (1, i, s * 0.8f);
+    }
+    engine.process (buf);
+
+    float peak = 0.0f;
+    for (int ch = 0; ch < 2; ++ch)
+        for (int i = constants::fftSize; i < buf.getNumSamples(); ++i)
+            peak = std::max (peak, std::abs (buf.getSample (ch, i)));
+    CHECK (std::isfinite (peak));
+    CHECK (peak < 2.05f); // emergency ceiling + margin
+    std::cout << "  spike peak=" << peak << "\n";
+
+    // Long stress: noise in → noise out floor must not grow without bound.
+    juce::Random rng (0xC0FFEEu);
+    juce::AudioBuffer<float> noise (2, 48000 * 8); // 8 s @ 48 kHz
+    for (int i = 0; i < noise.getNumSamples(); ++i)
+    {
+        const float n = (rng.nextFloat() * 2.0f - 1.0f) * 0.2f;
+        noise.setSample (0, i, n);
+        noise.setSample (1, i, n);
+    }
+    engine.reset();
+    engine.setSpectralParameterTargets (0.70f, 0.40f, 0.30f, 0.18f, 0.35f, 0.0f, false);
+    engine.snapSpectralSmoothersToTargets();
+    engine.process (noise);
+
+    auto rmsOf = [] (const juce::AudioBuffer<float>& b, int start, int len) -> double
+    {
+        double e = 0.0;
+        const int end = juce::jmin (b.getNumSamples(), start + len);
+        int n = 0;
+        for (int i = start; i < end; ++i, ++n)
+        {
+            const float s = b.getSample (0, i);
+            e += (double) s * s;
+        }
+        return n > 0 ? std::sqrt (e / (double) n) : 0.0;
+    };
+
+    const double early = rmsOf (noise, constants::fftSize + 48000, 48000);
+    const double late  = rmsOf (noise, noise.getNumSamples() - 48000, 48000);
+    CHECK (early > 1.0e-6);
+    CHECK (late < early * 4.0); // no uncontrolled feedback growth
+    std::cout << "  noise RMS early=" << early << " late=" << late
+              << " ratio=" << (late / early) << "\n";
+
+#if JUCE_DEBUG
+    const auto hits = debug::safetyCounters().emergencyCeilingHits.load();
+    std::cout << "  debug emergencyCeilingHits=" << hits << "\n";
+#endif
+}
+
+//==============================================================================
 static void testStereoIsolation()
 {
     std::cout << "Stereo isolation (independent L/R)...\n";
@@ -1319,7 +1390,7 @@ static void testStftIdentity()
         CHECK_NEAR (buf.getMagnitude (0, 0, 4096), 0.0f, 1e-7);
     }
 
-    // WOLA table consistency — periodic Hann at 8× overlap is exact COLA
+    // WOLA table consistency — periodic Hann at 4× overlap is exact COLA
     {
         STFTProcessor stft;
         stft.prepare (48000.0, 512, 1);
@@ -1423,6 +1494,7 @@ int main()
     testRandomRecallWander();
     testEngineInfluenceZeroAndFreeze();
     testEngineShadowAudibleVsIdentity();
+    testShadowSpikeAndNoiseGrowth();
     testStereoIsolation();
     runEffectStrengthTests();
     runLicensingTests();
